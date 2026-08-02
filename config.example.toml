@@ -13,10 +13,11 @@ working_hours_end = "20:00"
 [[files]]
 id = "work"
 path = "/home/user/org/work.org"
+color = "#2563eb"
 
 [[files]]
 id = "customers"
 path = "/home/user/org/customers.org"
+color = "#16a34a"
 include_tags = ["customer"]
 exclude_tags = ["ARCHIVE"]
-

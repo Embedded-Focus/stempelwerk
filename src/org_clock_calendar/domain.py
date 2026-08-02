@@ -29,6 +29,11 @@ class ClockEntry(BaseModel):
     editable: bool = True
 
 
+class ClockEntriesResponse(BaseModel):
+    clocks: list[ClockEntry]
+    revisions: dict[str, str]
+
+
 class ClockMutation(BaseModel):
     heading_id: str
     start: datetime
@@ -42,6 +47,7 @@ class StatusResponse(BaseModel):
     write_mode: WriteMode
     timezone: str
     files: list[str]
+    file_colors: dict[str, str] = Field(default_factory=dict)
 
 
 class ApiErrorBody(BaseModel):
@@ -52,4 +58,3 @@ class ApiErrorBody(BaseModel):
 
 class ApiErrorResponse(BaseModel):
     error: ApiErrorBody
-

@@ -16,8 +16,56 @@ body {
   box-sizing: border-box;
 }
 
+.toolbar {
+  max-width: 1280px;
+  min-height: 44px;
+  margin: 0 auto 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.file-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.file-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+  border-radius: 6px;
+}
+
+.file-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px color-mix(in srgb, CanvasText 18%, transparent);
+}
+
+.reload-button {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+  border-radius: 6px;
+  background: ButtonFace;
+  color: ButtonText;
+}
+
+.status-line,
+.empty-files {
+  color: color-mix(in srgb, CanvasText 70%, transparent);
+  font-size: 0.9rem;
+}
+
 #calendar {
   max-width: 1280px;
   margin: 0 auto;
 }
-

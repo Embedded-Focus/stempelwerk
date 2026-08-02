@@ -1,0 +1,9 @@
+* Globex :customer:
+** Support call
+CLOCK: [2026-08-03 Mon 13:00]--[2026-08-03 Mon 13:45] =>  0:45
+
+* Initech :customer:
+** Implementation
+:LOGBOOK:
+CLOCK: [2026-08-04 Tue 09:00]--[2026-08-04 Tue 12:00] =>  3:00
+:END:

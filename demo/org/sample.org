@@ -1,0 +1,71 @@
+#+title: Org Clock Calendar Sample Data
+#+startup: overview
+
+* Product :product:
+** TODO Calendar read model
+:PROPERTIES:
+:ID:       sample-calendar-read-model
+:END:
+:LOGBOOK:
+CLOCK: [2026-08-03 Mon 08:30]--[2026-08-03 Mon 10:00] =>  1:30
+CLOCK: [2026-08-03 Mon 10:15]--[2026-08-03 Mon 11:45] =>  1:30
+:END:
+Notes that should remain untouched by future lossless edits.
+
+** TODO Timezone handling
+:LOGBOOK:
+CLOCK: [2026-08-04 Tue 08:45]--[2026-08-04 Tue 10:30] =>  1:45
+CLOCK: [2026-08-04 Tue 10:30]--[2026-08-04 Tue 11:15] =>  0:45
+:END:
+
+** DONE API smoke testing
+CLOSED: [2026-08-05 Wed 12:10]
+CLOCK: [2026-08-05 Wed 09:00]--[2026-08-05 Wed 10:00] =>  1:00
+CLOCK: [2026-08-05 Wed 10:05]--[2026-08-05 Wed 12:10] =>  2:05
+
+* Customers :customer:
+** Acme :billable:
+*** TODO Calendar feedback
+:LOGBOOK:
+CLOCK: [2026-08-03 Mon 13:00]--[2026-08-03 Mon 14:15] =>  1:15
+CLOCK: [2026-08-03 Mon 14:00]--[2026-08-03 Mon 15:00] =>  1:00
+:END:
+
+*** TODO Follow-up notes
+CLOCK: [2026-08-06 Thu 15:15]--[2026-08-06 Thu 16:00] =>  0:45
+
+** Globex :billable:
+*** Support
+:LOGBOOK:
+CLOCK: [2026-08-04 Tue 13:00]--[2026-08-04 Tue 13:50] =>  0:50
+:END:
+CLOCK: [2026-08-04 Tue 14:10]--[2026-08-04 Tue 15:40] =>  1:30
+
+*** Support
+CLOCK: [2026-08-05 Wed 15:30]--[2026-08-05 Wed 17:00] =>  1:30
+
+* Operations :ops:
+** Inbox triage
+CLOCK: [2026-08-06 Thu 08:00]--[2026-08-06 Thu 08:40] =>  0:40
+CLOCK: [2026-08-07 Fri 08:10]--[2026-08-07 Fri 08:35] =>  0:25
+
+** Weekly planning
+:LOGBOOK:
+CLOCK: [2026-08-07 Fri 09:00]--[2026-08-07 Fri 10:30] =>  1:30
+:END:
+
+** Night maintenance
+CLOCK: [2026-08-07 Fri 23:15]--[2026-08-08 Sat 00:45] =>  1:30
+
+* Research :deepwork:
+** Parser experiment
+:LOGBOOK:
+CLOCK: [2026-08-08 Sat 10:00]--[2026-08-08 Sat 12:30] =>  2:30
+:END:
+
+** Österreich locale check
+CLOCK: [2026-08-08 Sat 14:00]--[2026-08-08 Sat 14:35] =>  0:35
+
+* Archive candidate :ARCHIVE:
+** Old task
+CLOCK: [2026-08-02 Sun 16:00]--[2026-08-02 Sun 17:00] =>  1:00

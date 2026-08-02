@@ -21,6 +21,9 @@ http://127.0.0.1:8765/api/v1/status
 The frontend service proxies `/api` requests to the backend service inside the
 Compose network.
 
+The backend uses `demo/config.toml`, which points at the sample files in
+`demo/org/`.
+
 Follow service logs with:
 
 ```bash

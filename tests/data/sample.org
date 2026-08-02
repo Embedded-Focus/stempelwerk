@@ -1,0 +1,21 @@
+* Product :product:
+** TODO Calendar read model
+:PROPERTIES:
+:ID:       sample-calendar-read-model
+:END:
+:LOGBOOK:
+CLOCK: [2026-08-03 Mon 08:30]--[2026-08-03 Mon 10:00] =>  1:30
+CLOCK: [2026-08-03 Mon 10:15]--[2026-08-03 Mon 11:45] =>  1:30
+:END:
+
+* Customers :customer:
+** Acme :billable:
+*** TODO Calendar feedback
+:LOGBOOK:
+CLOCK: [2026-08-03 Mon 13:00]--[2026-08-03 Mon 14:15] =>  1:15
+CLOCK: [2026-08-03 Mon 14:00]--[2026-08-03 Mon 15:00] =>  1:00
+:END:
+
+* Operations :ops:
+** Night maintenance
+CLOCK: [2026-08-07 Fri 23:15]--[2026-08-08 Sat 00:45] =>  1:30

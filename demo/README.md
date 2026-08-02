@@ -1,0 +1,28 @@
+# Demo Environment
+
+This directory contains a Docker Compose setup for local browser testing.
+
+```bash
+make demo-up
+```
+
+Open the frontend at:
+
+```text
+http://127.0.0.1:5173
+```
+
+The backend API is exposed at:
+
+```text
+http://127.0.0.1:8765/api/v1/status
+```
+
+The frontend service proxies `/api` requests to the backend service inside the
+Compose network.
+
+Follow service logs with:
+
+```bash
+make demo-logs
+```

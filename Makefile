@@ -3,7 +3,7 @@ NPM ?= npm
 BACKEND_HOST ?= 127.0.0.1
 BACKEND_PORT ?= 8765
 
-.PHONY: help install install-python install-frontend install-hooks dev-api dev-frontend pre-commit test lint build-frontend clean
+.PHONY: help install install-python install-frontend install-hooks dev-api dev-frontend demo-up demo-down demo-logs pre-commit test lint build-frontend clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-24s\033[0m %s\n", $$1, $$2}'
@@ -24,6 +24,15 @@ dev-api: ## Start the FastAPI development server
 
 dev-frontend: ## Start the Vite frontend development server
 	$(NPM) --prefix frontend run dev
+
+demo-up: ## Start the Docker Compose demo environment
+	docker compose -f demo/compose.yaml up --build -d
+
+demo-down: ## Stop the Docker Compose demo environment
+	docker compose -f demo/compose.yaml down
+
+demo-logs: ## Follow Docker Compose demo logs
+	docker compose -f demo/compose.yaml logs -f
 
 pre-commit: ## Run pre-commit hooks on tracked and untracked files
 	$(PYTHON) pre-commit run --files $$(git ls-files --cached --others --exclude-standard)

@@ -21,3 +21,13 @@ npm install
 npm run dev
 ```
 
+## Docker Demo
+
+```bash
+make demo-up
+```
+
+Then open `http://127.0.0.1:5173`.
+
+Use `make demo-logs` to follow service output and `make demo-down` to stop the
+environment.

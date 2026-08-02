@@ -5,7 +5,7 @@ services:
       context: ..
       dockerfile: demo/backend.Dockerfile
     environment:
-      ORG_CLOCK_CALENDAR_CONFIG: demo/config.toml
+      STEMPELWERK_CONFIG: demo/config.toml
     ports:
       - "127.0.0.1:8765:8765"
 

@@ -1,8 +1,8 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from org_clock_calendar.config import OrgFileConfig
-from org_clock_calendar.org_reader import OrgReader
+from stempelwerk.config import OrgFileConfig
+from stempelwerk.org_reader import OrgReader
 
 
 def test_org_reader_lists_headings_and_clocks() -> None:

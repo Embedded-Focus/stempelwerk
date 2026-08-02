@@ -1,6 +1,6 @@
 # Architecture
 
-Org Clock Calendar has three main boundaries:
+Stempelwerk has three main boundaries:
 
 - `org_reader`: semantic traversal of configured Org files.
 - `org_writer`: lossless byte-preserving edits to individual `CLOCK:` lines.

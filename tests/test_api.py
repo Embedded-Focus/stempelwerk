@@ -2,7 +2,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from org_clock_calendar.app import create_app
+from stempelwerk.app import create_app
 
 
 def test_status_endpoint() -> None:
@@ -41,7 +41,7 @@ path = "{other_file}"
 """,
         encoding="utf-8",
     )
-    monkeypatch.setenv("ORG_CLOCK_CALENDAR_CONFIG", str(config_file))
+    monkeypatch.setenv("STEMPELWERK_CONFIG", str(config_file))
     client = TestClient(create_app())
 
     response = client.get(
@@ -70,7 +70,7 @@ color = "#2563eb"
 """,
         encoding="utf-8",
     )
-    monkeypatch.setenv("ORG_CLOCK_CALENDAR_CONFIG", str(config_file))
+    monkeypatch.setenv("STEMPELWERK_CONFIG", str(config_file))
     client = TestClient(create_app())
 
     response = client.get("/api/v1/status")

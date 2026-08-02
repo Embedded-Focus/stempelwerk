@@ -1,4 +1,4 @@
-"""Org Clock Calendar package."""
+"""Stempelwerk package."""
 
 __all__ = ["__version__"]
 

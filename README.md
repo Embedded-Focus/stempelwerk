@@ -1,4 +1,4 @@
-# Org Clock Calendar
+# Stempelwerk
 
 Local-first web application for viewing and editing Emacs Org mode
 `CLOCK:` entries through an interactive calendar.
@@ -11,7 +11,7 @@ day/week view.
 
 ```bash
 uv sync
-uv run uvicorn org_clock_calendar.app:create_app --factory --reload --host 127.0.0.1 --port 8765
+uv run uvicorn stempelwerk.app:create_app --factory --reload --host 127.0.0.1 --port 8765
 ```
 
 Frontend development will run separately from `frontend/`:
@@ -40,7 +40,7 @@ color = "#16a34a"
 Use another config file with:
 
 ```bash
-ORG_CLOCK_CALENDAR_CONFIG=./config.local.toml make dev-api
+STEMPELWERK_CONFIG=./config.local.toml make dev-api
 ```
 
 The browser only receives configured file IDs. Calendar filtering uses repeated

@@ -253,7 +253,7 @@ wheels = [
 ]
 
 [[package]]
-name = "org-clock-calendar"
+name = "stempelwerk"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

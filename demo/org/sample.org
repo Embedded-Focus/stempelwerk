@@ -1,4 +1,4 @@
-#+title: Org Clock Calendar Sample Data
+#+title: Stempelwerk Sample Data
 #+startup: overview
 
 * Product :product:

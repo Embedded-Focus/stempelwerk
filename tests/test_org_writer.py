@@ -1,4 +1,4 @@
-from org_clock_calendar.org_writer import OrgWriter, TextEdit
+from stempelwerk.org_writer import OrgWriter, TextEdit
 
 
 def test_replace_clock_line_preserves_surrounding_text() -> None:

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from org_clock_calendar.config import load_config
+from stempelwerk.config import load_config
 
 
 def test_load_config_from_toml(tmp_path: Path) -> None:

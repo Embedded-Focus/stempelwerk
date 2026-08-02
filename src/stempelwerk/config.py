@@ -41,7 +41,7 @@ def load_config(path: Path | None = None) -> AppConfig:
 
 
 def configured_config_path() -> Path | None:
-    raw_path = os.environ.get("ORG_CLOCK_CALENDAR_CONFIG")
+    raw_path = os.environ.get("STEMPELWERK_CONFIG")
     if raw_path:
         return Path(raw_path).expanduser()
 

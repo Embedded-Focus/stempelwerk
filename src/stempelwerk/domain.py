@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from org_clock_calendar.config import WriteMode
+from stempelwerk.config import WriteMode
 
 
 class Heading(BaseModel):

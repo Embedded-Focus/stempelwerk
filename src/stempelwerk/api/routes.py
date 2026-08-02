@@ -3,9 +3,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query
 
-from org_clock_calendar.config import load_config
-from org_clock_calendar.domain import ClockEntriesResponse, Heading, StatusResponse
-from org_clock_calendar.org_reader import OrgReader, UnknownOrgFileError
+from stempelwerk.config import load_config
+from stempelwerk.domain import ClockEntriesResponse, Heading, StatusResponse
+from stempelwerk.org_reader import OrgReader, UnknownOrgFileError
 
 router = APIRouter()
 FileIdQuery = Annotated[list[str] | None, Query()]

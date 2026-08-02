@@ -14,4 +14,4 @@ RUN uv sync --frozen --no-dev
 
 EXPOSE 8765
 
-CMD ["uvicorn", "org_clock_calendar.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8765"]
+CMD ["uvicorn", "stempelwerk.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8765"]

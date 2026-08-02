@@ -20,7 +20,7 @@ install-hooks: ## Install pre-commit hooks
 	$(PYTHON) pre-commit install
 
 dev-api: ## Start the FastAPI development server
-	$(PYTHON) uvicorn org_clock_calendar.app:create_app --factory --reload --host $(BACKEND_HOST) --port $(BACKEND_PORT)
+	$(PYTHON) uvicorn stempelwerk.app:create_app --factory --reload --host $(BACKEND_HOST) --port $(BACKEND_PORT)
 
 dev-frontend: ## Start the Vite frontend development server
 	$(NPM) --prefix frontend run dev

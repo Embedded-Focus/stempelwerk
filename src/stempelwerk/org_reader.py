@@ -4,9 +4,9 @@ from hashlib import sha256
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from org_clock_calendar.config import OrgFileConfig
-from org_clock_calendar.domain import ClockEntry, Heading
-from org_clock_calendar.revisions import revision_for_bytes
+from stempelwerk.config import OrgFileConfig
+from stempelwerk.domain import ClockEntry, Heading
+from stempelwerk.revisions import revision_for_bytes
 
 HEADING_RE = re.compile(r"^(?P<stars>\*+)\s+(?:(?P<todo>[A-Z]+)\s+)?(?P<title>.*?)(?:\s+:(?P<tags>[^:\s]+(?::[^:\s]+)*):)?\s*$")
 CLOCK_RE = re.compile(

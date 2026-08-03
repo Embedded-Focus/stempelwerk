@@ -34,13 +34,6 @@ class ClockEntriesResponse(BaseModel):
     revisions: dict[str, str]
 
 
-class ClockMutation(BaseModel):
-    heading_id: str
-    start: datetime
-    end: datetime
-    expected_revisions: dict[str, str]
-
-
 class StatusResponse(BaseModel):
     status: Literal["ok"]
     emacs_available: bool

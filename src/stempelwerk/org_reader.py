@@ -111,7 +111,7 @@ class OrgReader:
 
                 clocks.append(
                     ClockEntry(
-                        id=_clock_id(file_config.id, revision, line_number, line),
+                        id=_clock_id(file_config.id, heading.id, line_number, line),
                         file_id=file_config.id,
                         heading_id=heading.id,
                         heading_title=heading.title,
@@ -183,6 +183,6 @@ def _heading_id(file_id: str, outline: list[str], line_number: int) -> str:
     return f"heading:{sha256(source).hexdigest()}"
 
 
-def _clock_id(file_id: str, revision: str, line_number: int, line: str) -> str:
-    source = f"{file_id}\0{revision}\0{line_number}\0{line}".encode()
-    return f"clock:{sha256(source).hexdigest()}"
+def _clock_id(file_id: str, heading_id: str, line_number: int, line: str) -> str:
+    source = f"{file_id}\0{heading_id}\0{line_number}\0{line}".encode()
+    return f"clock:{file_id}:{sha256(source).hexdigest()}"

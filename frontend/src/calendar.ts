@@ -1,9 +1,10 @@
-import type { EventInput, EventMountArg, EventSourceFuncArg } from "@fullcalendar/core";
+import type { EventDropArg, EventInput, EventMountArg, EventSourceFuncArg } from "@fullcalendar/core";
 import { Calendar } from "@fullcalendar/core";
+import type { EventResizeDoneArg } from "@fullcalendar/interaction";
 import interactionPlugin from "@fullcalendar/interaction";
 import timeGridPlugin from "@fullcalendar/timegrid";
 
-import { getStatus, listClocks } from "./api";
+import { ClockUpdateError, getStatus, listClocks, updateClock } from "./api";
 import "./styles.css";
 
 const calendarElement = document.querySelector<HTMLElement>("#calendar");
@@ -34,15 +35,46 @@ const fileFilter = fileFilterElement;
 let selectedFileIds = new Set<string>();
 let fileColors = new Map<string, string>();
 
+const handleClockChange = async (info: EventDropArg | EventResizeDoneArg): Promise<void> => {
+  const { event } = info;
+  const revision = event.extendedProps.revision;
+
+  if (!event.start || !event.end || typeof revision !== "string") {
+    info.revert();
+    statusLine.textContent = "Could not update clock";
+    return;
+  }
+
+  try {
+    await updateClock({
+      id: event.id,
+      start: event.start.toISOString(),
+      end: event.end.toISOString(),
+      expectedRevision: revision
+    });
+    statusLine.textContent = "Clock updated";
+    calendar.refetchEvents();
+  } catch (error: unknown) {
+    console.error(error);
+    info.revert();
+    if (error instanceof ClockUpdateError && error.status === 409) {
+      statusLine.textContent = "Org file changed on disk - reloading calendar";
+      calendar.refetchEvents();
+    } else {
+      statusLine.textContent = "Could not update clock";
+    }
+  }
+};
+
 const calendar = new Calendar(calendarElement, {
   plugins: [interactionPlugin, timeGridPlugin],
   initialView: "timeGridWeek",
   firstDay: 1,
   nowIndicator: true,
   selectable: false,
-  editable: false,
-  eventStartEditable: false,
-  eventDurationEditable: false,
+  editable: true,
+  eventStartEditable: true,
+  eventDurationEditable: true,
   allDaySlot: false,
   slotDuration: "00:15:00",
   businessHours: {
@@ -72,9 +104,9 @@ const calendar = new Calendar(calendarElement, {
         backgroundColor: colorForFile(clock.file_id),
         borderColor: colorForFile(clock.file_id),
         textColor: textColorForBackground(colorForFile(clock.file_id)),
-        editable: false,
-        startEditable: false,
-        durationEditable: false,
+        editable: clock.editable,
+        startEditable: clock.editable,
+        durationEditable: clock.editable,
         extendedProps: {
           fileId: clock.file_id,
           headingId: clock.heading_id,
@@ -93,6 +125,12 @@ const calendar = new Calendar(calendarElement, {
     if (Array.isArray(outline)) {
       info.el.title = `${info.event.extendedProps.fileId}: ${outline.join(" / ")}`;
     }
+  },
+  eventDrop: (info: EventDropArg) => {
+    void handleClockChange(info);
+  },
+  eventResize: (info: EventResizeDoneArg) => {
+    void handleClockChange(info);
   }
 });
 

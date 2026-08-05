@@ -34,6 +34,12 @@ class ClockEntriesResponse(BaseModel):
     revisions: dict[str, str]
 
 
+class ClockUpdateRequest(BaseModel):
+    start: datetime
+    end: datetime
+    expected_revision: str
+
+
 class StatusResponse(BaseModel):
     status: Literal["ok"]
     emacs_available: bool

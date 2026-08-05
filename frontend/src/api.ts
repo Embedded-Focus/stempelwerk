@@ -53,3 +53,33 @@ export async function listClocks(params: {
   }
   return response.json() as Promise<ClockEntriesResponse>;
 }
+
+export class ClockUpdateError extends Error {
+  status: number;
+
+  constructor(status: number) {
+    super(`Clock update failed: ${status}`);
+    this.status = status;
+  }
+}
+
+export async function updateClock(params: {
+  id: string;
+  start: string;
+  end: string;
+  expectedRevision: string;
+}): Promise<void> {
+  const response = await fetch(`/api/v1/clocks/${encodeURIComponent(params.id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      start: params.start,
+      end: params.end,
+      expected_revision: params.expectedRevision
+    })
+  });
+
+  if (!response.ok) {
+    throw new ClockUpdateError(response.status);
+  }
+}

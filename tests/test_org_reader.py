@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 
 from stempelwerk.config import OrgFileConfig
 from stempelwerk.org_reader import OrgReader
+from stempelwerk.revisions import revision_for_file
 
 
 def test_org_reader_lists_headings_and_clocks() -> None:
@@ -97,3 +98,46 @@ def test_clock_id_encodes_file_id_and_survives_unrelated_edits(tmp_path: Path) -
     assert revisions_after["work"] != revisions_before["work"]
     assert development_after.id == development_before.id
     assert support_after.id != support_before.id
+
+
+def test_find_clock_locates_exact_line_including_indentation(tmp_path: Path) -> None:
+    org_file = tmp_path / "work.org"
+    text = (
+        "* Acme\n"
+        "** Development\n"
+        ":LOGBOOK:\n"
+        "  CLOCK: [2026-07-31 Fri 09:15]--[2026-07-31 Fri 11:30] =>  2:15\n"
+        ":END:\n"
+        "** Support\n"
+        "CLOCK: [2026-07-31 Fri 13:00]--[2026-07-31 Fri 13:45] =>  0:45\n"
+    )
+    org_file.write_text(text, encoding="utf-8")
+    reader = OrgReader([OrgFileConfig(id="work", path=org_file)], timezone="Europe/Vienna")
+
+    clocks, _ = reader.list_clocks(
+        start=datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+    )
+    development = next(c for c in clocks if c.heading_title == "Development")
+
+    parsed = reader.find_clock(development.id)
+
+    assert parsed is not None
+    assert parsed.entry == development
+    assert parsed.file.id == "work"
+    assert parsed.line == "  CLOCK: [2026-07-31 Fri 09:15]--[2026-07-31 Fri 11:30] =>  2:15"
+    assert text[parsed.line_start : parsed.line_end] == parsed.line
+    assert parsed.revision == revision_for_file(org_file)
+
+
+def test_find_clock_returns_none_for_unknown_or_malformed_id(tmp_path: Path) -> None:
+    org_file = tmp_path / "work.org"
+    org_file.write_text(
+        "* Development\nCLOCK: [2026-07-31 Fri 09:15]--[2026-07-31 Fri 11:30] =>  2:15\n",
+        encoding="utf-8",
+    )
+    reader = OrgReader([OrgFileConfig(id="work", path=org_file)], timezone="Europe/Vienna")
+
+    assert reader.find_clock("clock:work:doesnotexist") is None
+    assert reader.find_clock("clock:unknown-file:abc123") is None
+    assert reader.find_clock("not-a-clock-id") is None

@@ -1,12 +1,15 @@
+import logging
 from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query
 
 from stempelwerk.config import load_config
-from stempelwerk.domain import ClockEntriesResponse, Heading, StatusResponse
+from stempelwerk.domain import ClockEntriesResponse, ClockUpdateRequest, Heading, StatusResponse
 from stempelwerk.org_reader import OrgReader, UnknownOrgFileError
+from stempelwerk.org_writer import ClockNotFoundError, OrgWriter, RevisionConflictError
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 FileIdQuery = Annotated[list[str] | None, Query()]
 
@@ -78,3 +81,53 @@ def list_clocks(
         raise HTTPException(status_code=422, detail=str(error)) from error
 
     return ClockEntriesResponse(clocks=clocks, revisions=revisions)
+
+
+@router.patch("/clocks/{clock_id}", status_code=204)
+def update_clock(clock_id: str, payload: ClockUpdateRequest) -> None:
+    if payload.end <= payload.start:
+        logger.warning("Rejected update of clock %s: end (%s) is not after start (%s)", clock_id, payload.end, payload.start)
+        raise HTTPException(status_code=422, detail={"code": "invalid_time_range"})
+
+    config = load_config()
+    if config.write_mode == "read-only":
+        logger.warning(
+            "Rejected update of clock %s: write_mode is \"read-only\" in the loaded config, "
+            "set write_mode to \"auto\" or \"disk\" to allow writes",
+            clock_id,
+        )
+        raise HTTPException(status_code=422, detail={"code": "read_only"})
+    if config.write_mode == "emacs":
+        logger.warning(
+            "Rejected update of clock %s: write_mode is \"emacs\", but Emacs-mediated writes are not yet supported",
+            clock_id,
+        )
+        raise HTTPException(status_code=422, detail={"code": "emacs_not_supported"})
+
+    reader = OrgReader(config.files, config.timezone)
+    writer = OrgWriter()
+    try:
+        writer.update_clock(
+            reader,
+            clock_id,
+            start=payload.start,
+            end=payload.end,
+            expected_revision=payload.expected_revision,
+        )
+    except ClockNotFoundError as error:
+        logger.warning("Rejected update of clock %s: no clock with that id exists in the current file", clock_id)
+        raise HTTPException(status_code=404, detail={"code": "unknown_clock_id"}) from error
+    except RevisionConflictError as error:
+        logger.warning(
+            "Rejected update of clock %s: expected revision %s but file is now at %s "
+            "(the underlying Org file changed since it was loaded)",
+            clock_id,
+            error.expected_revision,
+            error.actual_revision,
+        )
+        raise HTTPException(status_code=409, detail={"code": "revision_conflict"}) from error
+    except FileNotFoundError as error:
+        logger.warning("Rejected update of clock %s: %s", clock_id, error)
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    logger.info("Updated clock %s", clock_id)

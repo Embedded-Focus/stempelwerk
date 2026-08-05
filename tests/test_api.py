@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from stempelwerk.app import create_app
+from stempelwerk.revisions import revision_for_file
 
 
 def _write_config(tmp_path: Path, content: str, monkeypatch) -> Path:
@@ -252,3 +253,195 @@ color = "#2563eb"
 
     assert response.status_code == 200
     assert response.json()["file_colors"] == {"work": "#2563eb"}
+
+
+def _configure_work_file(tmp_path: Path, monkeypatch, org_text: str, *, write_mode: str | None = None) -> Path:
+    org_file = tmp_path / "work.org"
+    org_file.write_text(org_text, encoding="utf-8")
+    write_mode_line = f'write_mode = "{write_mode}"\n' if write_mode else ""
+    _write_config(
+        tmp_path,
+        f"""
+timezone = "Europe/Vienna"
+{write_mode_line}
+[[files]]
+id = "work"
+path = "{org_file}"
+""",
+        monkeypatch,
+    )
+    return org_file
+
+
+def test_patch_clock_updates_line_preserves_unrelated_content_and_indentation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    org_file = _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Client Work :billable:\n"
+        "** Implementation\n"
+        "  CLOCK: [2026-07-31 Fri 09:15]--[2026-07-31 Fri 10:45] =>  1:30\n"
+        "** Review\n"
+        "CLOCK: [2026-07-31 Fri 11:00]--[2026-07-31 Fri 11:30] =>  0:30\n",
+    )
+    client = TestClient(create_app())
+    window = {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+
+    before = client.get("/api/v1/clocks", params=window).json()
+    implementation = next(c for c in before["clocks"] if c["heading_title"] == "Implementation")
+
+    patch_response = client.patch(
+        f"/api/v1/clocks/{implementation['id']}",
+        json={
+            "start": "2026-07-31T09:30:00+02:00",
+            "end": "2026-07-31T10:45:00+02:00",
+            "expected_revision": implementation["revision"],
+        },
+    )
+
+    assert patch_response.status_code == 204
+    assert patch_response.content == b""
+
+    updated_text = org_file.read_text(encoding="utf-8")
+    assert updated_text == (
+        "* Client Work :billable:\n"
+        "** Implementation\n"
+        "  CLOCK: [2026-07-31 Fri 09:30]--[2026-07-31 Fri 10:45] =>  1:15\n"
+        "** Review\n"
+        "CLOCK: [2026-07-31 Fri 11:00]--[2026-07-31 Fri 11:30] =>  0:30\n"
+    )
+
+    after = client.get("/api/v1/clocks", params=window).json()
+    updated = next(c for c in after["clocks"] if c["heading_title"] == "Implementation")
+    review = next(c for c in after["clocks"] if c["heading_title"] == "Review")
+
+    assert updated["start"] == "2026-07-31T09:30:00+02:00"
+    assert updated["end"] == "2026-07-31T10:45:00+02:00"
+    assert updated["duration_minutes"] == 75
+    assert review["start"] == "2026-07-31T11:00:00+02:00"
+    assert review["end"] == "2026-07-31T11:30:00+02:00"
+
+
+def test_patch_clock_rejects_stale_revision(tmp_path: Path, monkeypatch) -> None:
+    org_file = _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+    )
+    client = TestClient(create_app())
+    window = {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+
+    before = client.get("/api/v1/clocks", params=window).json()
+    clock = before["clocks"][0]
+
+    org_file.write_text(
+        "* Work :urgent:\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+        encoding="utf-8",
+    )
+
+    response = client.patch(
+        f"/api/v1/clocks/{clock['id']}",
+        json={
+            "start": "2026-07-31T09:30:00+02:00",
+            "end": "2026-07-31T10:45:00+02:00",
+            "expected_revision": clock["revision"],
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "revision_conflict"
+
+
+def test_patch_clock_unknown_id_returns_404(tmp_path: Path, monkeypatch) -> None:
+    org_file = _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+    )
+    client = TestClient(create_app())
+
+    response = client.patch(
+        "/api/v1/clocks/clock:work:doesnotexist",
+        json={
+            "start": "2026-07-31T09:30:00+02:00",
+            "end": "2026-07-31T10:45:00+02:00",
+            "expected_revision": revision_for_file(org_file),
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "unknown_clock_id"
+
+
+def test_patch_clock_invalid_time_range_returns_422(tmp_path: Path, monkeypatch) -> None:
+    _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+    )
+    client = TestClient(create_app())
+    window = {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+    clock = client.get("/api/v1/clocks", params=window).json()["clocks"][0]
+
+    response = client.patch(
+        f"/api/v1/clocks/{clock['id']}",
+        json={
+            "start": "2026-07-31T10:45:00+02:00",
+            "end": "2026-07-31T09:30:00+02:00",
+            "expected_revision": clock["revision"],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "invalid_time_range"
+
+
+def test_patch_clock_rejects_when_read_only(tmp_path: Path, monkeypatch, caplog) -> None:
+    _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+        write_mode="read-only",
+    )
+    client = TestClient(create_app())
+    window = {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+    clock = client.get("/api/v1/clocks", params=window).json()["clocks"][0]
+
+    with caplog.at_level("WARNING", logger="stempelwerk.api.routes"):
+        response = client.patch(
+            f"/api/v1/clocks/{clock['id']}",
+            json={
+                "start": "2026-07-31T09:30:00+02:00",
+                "end": "2026-07-31T10:45:00+02:00",
+                "expected_revision": clock["revision"],
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "read_only"
+    assert any("read-only" in record.message for record in caplog.records)
+
+
+def test_patch_clock_rejects_when_emacs_write_mode(tmp_path: Path, monkeypatch) -> None:
+    _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+        write_mode="emacs",
+    )
+    client = TestClient(create_app())
+    window = {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+    clock = client.get("/api/v1/clocks", params=window).json()["clocks"][0]
+
+    response = client.patch(
+        f"/api/v1/clocks/{clock['id']}",
+        json={
+            "start": "2026-07-31T09:30:00+02:00",
+            "end": "2026-07-31T10:45:00+02:00",
+            "expected_revision": clock["revision"],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "emacs_not_supported"

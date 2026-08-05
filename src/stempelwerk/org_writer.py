@@ -1,4 +1,13 @@
+import os
+import tempfile
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+
+from stempelwerk.org_reader import OrgReader
+from stempelwerk.revisions import revision_for_bytes
+
+_WEEKDAY_ABBREVIATIONS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
 
 @dataclass(frozen=True)
@@ -6,6 +15,30 @@ class TextEdit:
     start: int
     end: int
     replacement: str
+
+
+class ClockNotFoundError(LookupError):
+    def __init__(self, clock_id: str) -> None:
+        self.clock_id = clock_id
+        super().__init__(f"Unknown clock id: {clock_id}")
+
+
+class RevisionConflictError(ValueError):
+    def __init__(self, expected_revision: str, actual_revision: str) -> None:
+        self.expected_revision = expected_revision
+        self.actual_revision = actual_revision
+        super().__init__("File revision changed since it was loaded")
+
+
+def format_clock_timestamp(moment: datetime) -> str:
+    weekday = _WEEKDAY_ABBREVIATIONS[moment.weekday()]
+    return f"[{moment:%Y-%m-%d} {weekday} {moment:%H:%M}]"
+
+
+def format_clock_duration(start: datetime, end: datetime) -> str:
+    total_minutes = int((end - start).total_seconds() // 60)
+    hours, minutes = divmod(total_minutes, 60)
+    return f"{hours}:{minutes:02d}"
 
 
 class OrgWriter:
@@ -16,3 +49,55 @@ class OrgWriter:
             raise ValueError("invalid edit range")
         return source[: edit.start] + edit.replacement + source[edit.end :]
 
+    def update_clock(
+        self,
+        reader: OrgReader,
+        clock_id: str,
+        start: datetime,
+        end: datetime,
+        expected_revision: str,
+    ) -> None:
+        file_config = reader.resolve_file(clock_id)
+        if file_config is None:
+            raise ClockNotFoundError(clock_id)
+
+        raw = file_config.path.read_bytes()
+        current_revision = revision_for_bytes(raw)
+        if current_revision != expected_revision:
+            raise RevisionConflictError(expected_revision, current_revision)
+
+        parsed = reader.find_clock(clock_id)
+        if parsed is None:
+            raise ClockNotFoundError(clock_id)
+
+        local_start = start.astimezone(reader.timezone)
+        local_end = end.astimezone(reader.timezone)
+        indent = parsed.line[: len(parsed.line) - len(parsed.line.lstrip())]
+        replacement = (
+            f"{indent}CLOCK: {format_clock_timestamp(local_start)}--{format_clock_timestamp(local_end)}"
+            f" =>  {format_clock_duration(local_start, local_end)}"
+        )
+
+        text = raw.decode("utf-8")
+        edit = TextEdit(start=parsed.line_start, end=parsed.line_end, replacement=replacement)
+        updated_text = self.replace_clock_line(text, edit)
+
+        _create_backup(file_config.path, raw)
+        _write_atomically(file_config.path, updated_text)
+
+
+def _create_backup(path: Path, raw: bytes) -> None:
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
+    backup_path = path.with_name(f"{path.name}.bak.{timestamp}")
+    backup_path.write_bytes(raw)
+
+
+def _write_atomically(path: Path, content: str) -> None:
+    fd, tmp_path = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as tmp_file:
+            tmp_file.write(content)
+        os.replace(tmp_path, path)
+    except BaseException:
+        Path(tmp_path).unlink(missing_ok=True)
+        raise

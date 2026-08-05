@@ -1,4 +1,5 @@
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
@@ -18,6 +19,23 @@ CLOCK_RE = re.compile(
 )
 
 
+@dataclass(frozen=True)
+class ParsedClock:
+    """Internal source-location metadata for a parsed CLOCK: line.
+
+    Not exposed through the public API response; used by OrgWriter to
+    locate and replace the exact line a mutation targets.
+    """
+
+    entry: ClockEntry
+    file: OrgFileConfig
+    line_number: int
+    line_start: int
+    line_end: int
+    line: str
+    revision: str
+
+
 class OrgReader:
     """Semantic Org reader facade.
 
@@ -28,6 +46,16 @@ class OrgReader:
     def __init__(self, files: list[OrgFileConfig], timezone: str) -> None:
         self._files = files
         self._timezone = ZoneInfo(timezone)
+
+    @property
+    def timezone(self) -> ZoneInfo:
+        return self._timezone
+
+    def resolve_file(self, clock_id: str) -> OrgFileConfig | None:
+        file_id = _clock_id_file_id(clock_id)
+        if file_id is None:
+            return None
+        return next((file for file in self._files if file.id == file_id), None)
 
     def list_headings(self) -> list[Heading]:
         headings: list[Heading] = []
@@ -46,11 +74,21 @@ class OrgReader:
         revisions: dict[str, str] = {}
 
         for file_config in selected_files:
-            _, file_clocks, revision = self._read_file(file_config)
+            _, parsed_clocks, revision = self._read_file(file_config)
             revisions[file_config.id] = revision
-            clocks.extend(clock for clock in file_clocks if clock.start < end and clock.end > start)
+            clocks.extend(
+                parsed.entry for parsed in parsed_clocks if parsed.entry.start < end and parsed.entry.end > start
+            )
 
         return clocks, revisions
+
+    def find_clock(self, clock_id: str) -> ParsedClock | None:
+        file_config = self.resolve_file(clock_id)
+        if file_config is None:
+            return None
+
+        _, parsed_clocks, _ = self._read_file(file_config)
+        return next((parsed for parsed in parsed_clocks if parsed.entry.id == clock_id), None)
 
     def _selected_files(self, file_ids: list[str] | None) -> list[OrgFileConfig]:
         if not file_ids:
@@ -63,15 +101,21 @@ class OrgReader:
 
         return [configured[file_id] for file_id in file_ids]
 
-    def _read_file(self, file_config: OrgFileConfig) -> tuple[list[Heading], list[ClockEntry], str]:
+    def _read_file(self, file_config: OrgFileConfig) -> tuple[list[Heading], list[ParsedClock], str]:
         raw = file_config.path.read_bytes()
         text = raw.decode("utf-8")
         revision = revision_for_bytes(raw)
         heading_stack: list[ParsedHeading] = []
         headings: list[Heading] = []
-        clocks: list[ClockEntry] = []
+        clocks: list[ParsedClock] = []
 
-        for line_number, line in enumerate(text.splitlines(), start=1):
+        offset = 0
+        for line_number, raw_line in enumerate(text.splitlines(keepends=True), start=1):
+            line = raw_line.splitlines()[0] if raw_line else ""
+            line_start = offset
+            line_end = line_start + len(line)
+            offset += len(raw_line)
+
             heading_match = HEADING_RE.match(line)
             if heading_match:
                 level = len(heading_match.group("stars"))
@@ -109,16 +153,25 @@ class OrgReader:
                 if duration_minutes <= 0:
                     continue
 
+                entry = ClockEntry(
+                    id=_clock_id(file_config.id, heading.id, line_number, line),
+                    file_id=file_config.id,
+                    heading_id=heading.id,
+                    heading_title=heading.title,
+                    outline=heading.outline,
+                    start=clock_start,
+                    end=clock_end,
+                    duration_minutes=duration_minutes,
+                    revision=revision,
+                )
                 clocks.append(
-                    ClockEntry(
-                        id=_clock_id(file_config.id, heading.id, line_number, line),
-                        file_id=file_config.id,
-                        heading_id=heading.id,
-                        heading_title=heading.title,
-                        outline=heading.outline,
-                        start=clock_start,
-                        end=clock_end,
-                        duration_minutes=duration_minutes,
+                    ParsedClock(
+                        entry=entry,
+                        file=file_config,
+                        line_number=line_number,
+                        line_start=line_start,
+                        line_end=line_end,
+                        line=line,
                         revision=revision,
                     )
                 )
@@ -186,3 +239,13 @@ def _heading_id(file_id: str, outline: list[str], line_number: int) -> str:
 def _clock_id(file_id: str, heading_id: str, line_number: int, line: str) -> str:
     source = f"{file_id}\0{heading_id}\0{line_number}\0{line}".encode()
     return f"clock:{file_id}:{sha256(source).hexdigest()}"
+
+
+def _clock_id_file_id(clock_id: str) -> str | None:
+    prefix, separator, remainder = clock_id.partition(":")
+    if prefix != "clock" or not separator:
+        return None
+    file_id, separator, _ = remainder.rpartition(":")
+    if not separator:
+        return None
+    return file_id

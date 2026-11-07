@@ -3,7 +3,7 @@
 Stempelwerk has three main boundaries:
 
 - `org_reader`: semantic traversal of configured Org files.
-- `org_writer`: lossless byte-preserving edits to individual `CLOCK:` lines.
+- `org_writer`: lossless byte-preserving edits to individual `CLOCK:` lines and heading titles.
 - `api`: local FastAPI endpoints consumed by the browser frontend.
 
 The frontend is intentionally small: Vite, TypeScript, and FullCalendar provide

@@ -63,6 +63,42 @@ export class ClockUpdateError extends Error {
   }
 }
 
+export class BackupError extends Error {
+  status: number;
+
+  constructor(status: number) {
+    super(`Backup request failed: ${status}`);
+    this.status = status;
+  }
+}
+
+export interface BackupInfo {
+  file_id: string;
+  filename: string;
+  created_at: string;
+}
+
+export async function createBackup(fileId: string): Promise<BackupInfo> {
+  const response = await fetch(`/api/v1/files/${encodeURIComponent(fileId)}/backups`, {
+    method: "POST"
+  });
+
+  if (!response.ok) {
+    throw new BackupError(response.status);
+  }
+  return response.json() as Promise<BackupInfo>;
+}
+
+export async function listBackups(fileId: string): Promise<BackupInfo[]> {
+  const response = await fetch(`/api/v1/files/${encodeURIComponent(fileId)}/backups`);
+
+  if (!response.ok) {
+    throw new BackupError(response.status);
+  }
+  const body = (await response.json()) as { backups: BackupInfo[] };
+  return body.backups;
+}
+
 export async function updateClock(params: {
   id: string;
   start: string;

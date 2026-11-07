@@ -5,7 +5,12 @@ import interactionPlugin from "@fullcalendar/interaction";
 import timeGridPlugin from "@fullcalendar/timegrid";
 
 import { ClockUpdateError, getStatus, listClocks, updateClock } from "./api";
+import { mountDebugPanel } from "./debug-panel";
 import "./styles.css";
+
+const debugEnabled =
+  import.meta.env.VITE_DEBUG_PANEL === "1" ||
+  new URLSearchParams(window.location.search).has("debug");
 
 const calendarElement = document.querySelector<HTMLElement>("#calendar");
 const appElement = document.querySelector<HTMLElement>("#app");
@@ -146,6 +151,13 @@ void getStatus()
     fileColors = new Map(Object.entries(status.file_colors));
     renderFileFilter(status.files);
     statusLine.textContent = status.files.length === 0 ? "No configured files" : "Ready";
+    if (debugEnabled) {
+      mountDebugPanel(appElement, status.files, {
+        onStatus: (message: string) => {
+          statusLine.textContent = message;
+        }
+      });
+    }
     calendar.refetchEvents();
   })
   .catch((error: unknown) => {

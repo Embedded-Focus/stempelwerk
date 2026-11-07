@@ -69,3 +69,98 @@ body {
   max-width: 1280px;
   margin: 0 auto;
 }
+
+.debug-panel {
+  max-width: 1280px;
+  margin: 16px auto 32px;
+  padding: 8px 16px;
+  border: 1px dashed color-mix(in srgb, CanvasText 30%, transparent);
+  border-radius: 8px;
+}
+
+.debug-panel.debug-collapsed {
+  padding: 4px 16px;
+}
+
+.debug-panel.debug-collapsed .debug-file,
+.debug-panel.debug-collapsed .debug-empty {
+  display: none;
+}
+
+.debug-panel h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.debug-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 8px;
+  margin: 4px 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.debug-toggle:hover {
+  background: color-mix(in srgb, CanvasText 8%, transparent);
+}
+
+.debug-toggle-arrow {
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+
+.debug-collapsed .debug-toggle-arrow {
+  transform: rotate(-90deg);
+}
+
+.debug-empty {
+  color: color-mix(in srgb, CanvasText 70%, transparent);
+  margin: 0;
+}
+
+.debug-file {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 4px 0;
+}
+
+.debug-file-id {
+  min-width: 8ch;
+  font-weight: 600;
+}
+
+.debug-backup-button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+  border-radius: 6px;
+  background: ButtonFace;
+  color: ButtonText;
+}
+
+.debug-backup-button:disabled {
+  opacity: 0.6;
+}
+
+.debug-backup-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  flex-basis: 100%;
+}
+
+.debug-backup-item {
+  color: color-mix(in srgb, CanvasText 70%, transparent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+}

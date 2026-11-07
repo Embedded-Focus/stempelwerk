@@ -44,7 +44,9 @@ def list_headings(
         configured_ids = {file.id for file in config.files}
         unknown = sorted(set(file_ids) - configured_ids)
         if unknown:
-            raise HTTPException(status_code=422, detail={"code": "unknown_file_id", "files": unknown})
+            raise HTTPException(
+                status_code=422, detail={"code": "unknown_file_id", "files": unknown}
+            )
         headings = [heading for heading in headings if heading.file_id in file_ids]
 
     normalized_query = query.casefold().strip()
@@ -86,20 +88,25 @@ def list_clocks(
 @router.patch("/clocks/{clock_id}", status_code=204)
 def update_clock(clock_id: str, payload: ClockUpdateRequest) -> None:
     if payload.end <= payload.start:
-        logger.warning("Rejected update of clock %s: end (%s) is not after start (%s)", clock_id, payload.end, payload.start)
+        logger.warning(
+            "Rejected update of clock %s: end (%s) is not after start (%s)",
+            clock_id,
+            payload.end,
+            payload.start,
+        )
         raise HTTPException(status_code=422, detail={"code": "invalid_time_range"})
 
     config = load_config()
     if config.write_mode == "read-only":
         logger.warning(
-            "Rejected update of clock %s: write_mode is \"read-only\" in the loaded config, "
-            "set write_mode to \"auto\" or \"disk\" to allow writes",
+            'Rejected update of clock %s: write_mode is "read-only" in the loaded config, '
+            'set write_mode to "auto" or "disk" to allow writes',
             clock_id,
         )
         raise HTTPException(status_code=422, detail={"code": "read_only"})
     if config.write_mode == "emacs":
         logger.warning(
-            "Rejected update of clock %s: write_mode is \"emacs\", but Emacs-mediated writes are not yet supported",
+            'Rejected update of clock %s: write_mode is "emacs", but Emacs-mediated writes are not yet supported',
             clock_id,
         )
         raise HTTPException(status_code=422, detail={"code": "emacs_not_supported"})
@@ -115,7 +122,10 @@ def update_clock(clock_id: str, payload: ClockUpdateRequest) -> None:
             expected_revision=payload.expected_revision,
         )
     except ClockNotFoundError as error:
-        logger.warning("Rejected update of clock %s: no clock with that id exists in the current file", clock_id)
+        logger.warning(
+            "Rejected update of clock %s: no clock with that id exists in the current file",
+            clock_id,
+        )
         raise HTTPException(status_code=404, detail={"code": "unknown_clock_id"}) from error
     except RevisionConflictError as error:
         logger.warning(

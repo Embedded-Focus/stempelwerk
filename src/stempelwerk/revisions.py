@@ -8,4 +8,3 @@ def revision_for_bytes(raw: bytes) -> str:
 
 def revision_for_file(path: Path) -> str:
     return revision_for_bytes(path.read_bytes())
-

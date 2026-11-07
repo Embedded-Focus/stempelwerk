@@ -22,9 +22,7 @@ def test_status_endpoint() -> None:
     assert response.json()["status"] == "ok"
 
 
-def test_clocks_endpoint_returns_entries_parsed_from_org_file(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_clocks_endpoint_returns_entries_parsed_from_org_file(tmp_path: Path, monkeypatch) -> None:
     org_file = tmp_path / "work.org"
     org_file.write_text(
         """
@@ -255,7 +253,9 @@ color = "#2563eb"
     assert response.json()["file_colors"] == {"work": "#2563eb"}
 
 
-def _configure_work_file(tmp_path: Path, monkeypatch, org_text: str, *, write_mode: str | None = None) -> Path:
+def _configure_work_file(
+    tmp_path: Path, monkeypatch, org_text: str, *, write_mode: str | None = None
+) -> Path:
     org_file = tmp_path / "work.org"
     org_file.write_text(org_text, encoding="utf-8")
     write_mode_line = f'write_mode = "{write_mode}"\n' if write_mode else ""

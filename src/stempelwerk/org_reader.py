@@ -9,7 +9,9 @@ from stempelwerk.config import OrgFileConfig
 from stempelwerk.domain import ClockEntry, Heading
 from stempelwerk.revisions import revision_for_bytes
 
-HEADING_RE = re.compile(r"^(?P<stars>\*+)\s+(?:(?P<todo>[A-Z]+)\s+)?(?P<title>.*?)(?:\s+:(?P<tags>[^:\s]+(?::[^:\s]+)*):)?\s*$")
+HEADING_RE = re.compile(
+    r"^(?P<stars>\*+)\s+(?:(?P<todo>[A-Z]+)\s+)?(?P<title>.*?)(?:\s+:(?P<tags>[^:\s]+(?::[^:\s]+)*):)?\s*$"
+)
 CLOCK_RE = re.compile(
     r"^(?P<indent>\s*)CLOCK:\s+"
     r"\[(?P<start_date>\d{4}-\d{2}-\d{2})(?:\s+\w+)?\s+(?P<start_time>\d{2}:\d{2})\]"
@@ -77,7 +79,9 @@ class OrgReader:
             _, parsed_clocks, revision = self._read_file(file_config)
             revisions[file_config.id] = revision
             clocks.extend(
-                parsed.entry for parsed in parsed_clocks if parsed.entry.start < end and parsed.entry.end > start
+                parsed.entry
+                for parsed in parsed_clocks
+                if parsed.entry.start < end and parsed.entry.end > start
             )
 
         return clocks, revisions
@@ -101,7 +105,9 @@ class OrgReader:
 
         return [configured[file_id] for file_id in file_ids]
 
-    def _read_file(self, file_config: OrgFileConfig) -> tuple[list[Heading], list[ParsedClock], str]:
+    def _read_file(
+        self, file_config: OrgFileConfig
+    ) -> tuple[list[Heading], list[ParsedClock], str]:
         raw = file_config.path.read_bytes()
         text = raw.decode("utf-8")
         revision = revision_for_bytes(raw)

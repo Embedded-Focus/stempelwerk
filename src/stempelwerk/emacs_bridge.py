@@ -8,4 +8,3 @@ class EmacsBridge:
 
     def available(self) -> bool:
         return which(self.emacsclient) is not None
-

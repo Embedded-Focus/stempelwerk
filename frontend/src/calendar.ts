@@ -40,8 +40,30 @@ const fileFilter = fileFilterElement;
 let selectedFileIds = new Set<string>();
 let fileColors = new Map<string, string>();
 
+let dragActive = false;
+let dragCancelRequested = false;
+
+document.addEventListener("keydown", (event: KeyboardEvent) => {
+  if (event.key !== "Escape" || !dragActive) {
+    return;
+  }
+  dragCancelRequested = true;
+  // End the drag the way a mouse release would. FullCalendar computes the
+  // final mutation from the last hit and fires eventDrop/eventResize, where
+  // the cancel flag makes us revert instead of saving.
+  document.dispatchEvent(new MouseEvent("mouseup"));
+});
+
 const handleClockChange = async (info: EventDropArg | EventResizeDoneArg): Promise<void> => {
   const { event } = info;
+
+  if (dragCancelRequested) {
+    dragCancelRequested = false;
+    info.revert();
+    statusLine.textContent = "Change cancelled";
+    return;
+  }
+
   const revision = event.extendedProps.revision;
 
   if (!event.start || !event.end || typeof revision !== "string") {
@@ -136,6 +158,20 @@ const calendar = new Calendar(calendarElement, {
   },
   eventResize: (info: EventResizeDoneArg) => {
     void handleClockChange(info);
+  },
+  eventDragStart: () => {
+    dragActive = true;
+    dragCancelRequested = false;
+  },
+  eventDragStop: () => {
+    dragActive = false;
+  },
+  eventResizeStart: () => {
+    dragActive = true;
+    dragCancelRequested = false;
+  },
+  eventResizeStop: () => {
+    dragActive = false;
   }
 });
 

@@ -6,6 +6,8 @@ services:
       dockerfile: demo/backend.Dockerfile
     environment:
       STEMPELWERK_CONFIG: demo/config.toml
+    volumes:
+      - ./org:/app/demo/org:Z
     ports:
       - "127.0.0.1:8765:8765"
 
@@ -15,6 +17,7 @@ services:
       dockerfile: demo/frontend.Dockerfile
     environment:
       VITE_API_PROXY_TARGET: http://backend:8765
+      VITE_DEBUG_PANEL: "1"
     depends_on:
       - backend
     ports:

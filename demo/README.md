@@ -26,6 +26,10 @@ Compose network.
 The backend uses `demo/config.toml`, which points at the sample files in
 `demo/org/`.
 
+The demo enables the debug panel (`VITE_DEBUG_PANEL=1`), which offers a
+"Create backup" button per configured file. Backups are no longer created
+automatically on clock updates; you create them from this panel.
+
 Follow service logs with:
 
 ```bash

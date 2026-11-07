@@ -116,3 +116,9 @@ The Compose demo defaults to Docker. To use Podman instead (requires the
 ```bash
 make demo-up CONTAINER_ENGINE=podman
 ```
+
+The demo enables the debug panel, which offers a "Create backup" button per
+configured file. Clock updates no longer create backups automatically; you
+create them from this panel. In a dev setup you enable the panel with
+`VITE_DEBUG_PANEL=1` in the environment of the dev server, or by opening the
+frontend with `?debug=1` in the URL.

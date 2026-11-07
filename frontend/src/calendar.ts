@@ -1,5 +1,5 @@
 import type {
-  EventClickArg,
+  EventApi,
   EventDropArg,
   EventInput,
   EventMountArg,
@@ -168,6 +168,10 @@ const calendar = new Calendar(calendarElement, {
     if (Array.isArray(outline)) {
       info.el.title = `${info.event.extendedProps.fileId}: ${outline.join(" / ")}`;
     }
+    info.el.addEventListener("dblclick", (event: MouseEvent) => {
+      event.preventDefault();
+      handleEventClick(info.event);
+    });
   },
   eventDrop: (info: EventDropArg) => {
     void handleClockChange(info);
@@ -188,19 +192,16 @@ const calendar = new Calendar(calendarElement, {
   },
   eventResizeStop: () => {
     dragActive = false;
-  },
-  eventClick: (info: EventClickArg) => {
-    handleEventClick(info);
   }
 });
 
-const handleEventClick = (info: EventClickArg): void => {
+const handleEventClick = (event: EventApi): void => {
   if (writeMode === "read-only" || writeMode === "emacs") {
     statusLine.textContent = "Renaming is not available in this write mode";
     return;
   }
 
-  const { fileId, headingId, outline, revision } = info.event.extendedProps as {
+  const { fileId, headingId, outline, revision } = event.extendedProps as {
     fileId?: unknown;
     headingId?: unknown;
     outline?: unknown;
@@ -220,7 +221,7 @@ const handleEventClick = (info: EventClickArg): void => {
   openRenameDialog({
     fileId,
     outline: outline.filter((part): part is string => typeof part === "string"),
-    title: info.event.title,
+    title: event.title,
     onSave: async (title: string) => {
       try {
         await renameHeading({

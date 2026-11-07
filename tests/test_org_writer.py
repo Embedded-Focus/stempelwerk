@@ -1,5 +1,6 @@
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from stempelwerk.config import OrgFileConfig
@@ -56,7 +57,7 @@ def test_update_clock_preserves_indentation_and_replaces_only_target_line(tmp_pa
         "** Support\n"
         "CLOCK: [2026-07-31 Fri 13:00]--[2026-07-31 Fri 13:45] =>  0:45\n",
     )
-    window = {
+    window: dict[str, Any] = {
         "start": datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
         "end": datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
     }

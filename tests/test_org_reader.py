@@ -1,5 +1,6 @@
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from stempelwerk.config import OrgFileConfig
@@ -72,7 +73,7 @@ def test_clock_id_encodes_file_id_and_survives_unrelated_edits(tmp_path: Path) -
         encoding="utf-8",
     )
     reader = OrgReader([OrgFileConfig(id="work", path=org_file)], timezone="Europe/Vienna")
-    window = {
+    window: dict[str, Any] = {
         "start": datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
         "end": datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
     }

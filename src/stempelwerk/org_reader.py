@@ -109,6 +109,18 @@ class OrgReader:
         parsed_headings, _, _ = self._read_file(file_config)
         return next((heading for heading in parsed_headings if heading.id == heading_id), None)
 
+    def clock_at_line(self, file_id: str, line_number: int) -> ParsedClock | None:
+        """Re-read the file and return the clock on this 1-based line, or None.
+
+        Raise UnknownOrgFileError([file_id]) if the file ID is not configured.
+        """
+        file_config = self.file_by_id(file_id)
+        if file_config is None:
+            raise UnknownOrgFileError([file_id])
+
+        _, parsed_clocks, _ = self._read_file(file_config)
+        return next((clock for clock in parsed_clocks if clock.line_number == line_number), None)
+
     def _selected_files(self, file_ids: list[str] | None) -> list[OrgFileConfig]:
         if not file_ids:
             return self._files
@@ -157,6 +169,7 @@ class OrgReader:
                     line_end=line_end,
                     title_start=line_start + heading_match.start("title"),
                     title_end=line_start + heading_match.end("title"),
+                    line_number=line_number,
                 )
                 heading_stack.append(heading)
                 headings.append(heading)
@@ -231,6 +244,7 @@ class ParsedHeading:
         line_end: int,
         title_start: int,
         title_end: int,
+        line_number: int,
     ) -> None:
         self.id = id
         self.file_id = file_id
@@ -244,6 +258,7 @@ class ParsedHeading:
         self.line_end = line_end
         self.title_start = title_start
         self.title_end = title_end
+        self.line_number = line_number
 
     def to_domain(self) -> Heading:
         return Heading(

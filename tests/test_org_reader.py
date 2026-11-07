@@ -190,3 +190,32 @@ def _heading_id_for_outline(reader: OrgReader, outline: list[str], file_id: str)
     heading = next(h for h in reader.list_headings() if h.outline == outline)
     assert heading.file_id == file_id
     return heading.id
+
+
+def test_find_heading_reports_one_based_line_number(tmp_path: Path) -> None:
+    org_file = tmp_path / "work.org"
+    org_file.write_text("* First\n\n* Second\n", encoding="utf-8")
+    reader = OrgReader([OrgFileConfig(id="work", path=org_file)], timezone="Europe/Vienna")
+
+    second_id = _heading_id_for_outline(reader, ["Second"], "work")
+    parsed = reader.find_heading("work", second_id)
+
+    assert parsed is not None
+    assert parsed.line_number == 3
+    assert parsed.line == "* Second"
+
+
+def test_clock_at_line_returns_clock_on_that_line(tmp_path: Path) -> None:
+    org_file = tmp_path / "work.org"
+    org_file.write_text(
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+        encoding="utf-8",
+    )
+    reader = OrgReader([OrgFileConfig(id="work", path=org_file)], timezone="Europe/Vienna")
+
+    parsed = reader.clock_at_line("work", 2)
+
+    assert parsed is not None
+    assert parsed.line_number == 2
+    assert parsed.entry.heading_title == "Work"
+    assert reader.clock_at_line("work", 1) is None

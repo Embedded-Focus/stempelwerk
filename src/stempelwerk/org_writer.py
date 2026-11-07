@@ -1,11 +1,14 @@
 import os
+import re
 import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from stempelwerk.org_reader import OrgReader
+from stempelwerk.org_reader import OrgReader, UnknownOrgFileError
 from stempelwerk.revisions import revision_for_bytes
+
+_BACKUP_NAME_RE = re.compile(r"^.+\.bak\.(?P<timestamp>\d{8}T\d{12})$")
 
 _WEEKDAY_ABBREVIATIONS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
@@ -28,6 +31,32 @@ class RevisionConflictError(ValueError):
         self.expected_revision = expected_revision
         self.actual_revision = actual_revision
         super().__init__("File revision changed since it was loaded")
+
+
+def backup_created_at(filename: str) -> datetime | None:
+    """Parse the UTC timestamp from a backup file name, or return None."""
+
+    match = _BACKUP_NAME_RE.match(filename)
+    if match is None:
+        return None
+    try:
+        return datetime.strptime(match.group("timestamp"), "%Y%m%dT%H%M%S%f").replace(tzinfo=UTC)
+    except ValueError:
+        return None
+
+
+def list_backups(path: Path) -> list[Path]:
+    """List backup files for *path* next to it, oldest first."""
+
+    prefix = f"{path.name}.bak."
+    backups = [
+        entry
+        for entry in path.parent.iterdir()
+        if entry.is_file() and entry.name.startswith(prefix) and backup_created_at(entry.name)
+    ]
+    return sorted(
+        backups, key=lambda entry: backup_created_at(entry.name) or datetime.min.replace(tzinfo=UTC)
+    )
 
 
 def format_clock_timestamp(moment: datetime) -> str:
@@ -82,14 +111,23 @@ class OrgWriter:
         edit = TextEdit(start=parsed.line_start, end=parsed.line_end, replacement=replacement)
         updated_text = self.replace_clock_line(text, edit)
 
-        _create_backup(file_config.path, raw)
         _write_atomically(file_config.path, updated_text)
 
+    def create_backup(self, reader: OrgReader, file_id: str) -> Path:
+        """Create a backup of the current contents of a configured Org file."""
 
-def _create_backup(path: Path, raw: bytes) -> None:
+        file_config = reader.file_by_id(file_id)
+        if file_config is None:
+            raise UnknownOrgFileError([file_id])
+        raw = file_config.path.read_bytes()
+        return _create_backup(file_config.path, raw)
+
+
+def _create_backup(path: Path, raw: bytes) -> Path:
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
     backup_path = path.with_name(f"{path.name}.bak.{timestamp}")
     backup_path.write_bytes(raw)
+    return backup_path
 
 
 def _write_atomically(path: Path, content: str) -> None:

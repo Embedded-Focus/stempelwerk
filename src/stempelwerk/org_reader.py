@@ -59,6 +59,9 @@ class OrgReader:
             return None
         return next((file for file in self._files if file.id == file_id), None)
 
+    def file_by_id(self, file_id: str) -> OrgFileConfig | None:
+        return next((file for file in self._files if file.id == file_id), None)
+
     def list_headings(self) -> list[Heading]:
         headings: list[Heading] = []
         for file_config in self._files:

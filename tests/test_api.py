@@ -445,3 +445,129 @@ def test_patch_clock_rejects_when_emacs_write_mode(tmp_path: Path, monkeypatch) 
 
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "emacs_not_supported"
+
+
+def _configure_backup_file(tmp_path: Path, monkeypatch) -> Path:
+    org_file = tmp_path / "work.org"
+    org_file.write_text(
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+        encoding="utf-8",
+    )
+    _write_config(
+        tmp_path,
+        f"""
+timezone = "Europe/Vienna"
+
+[[files]]
+id = "work"
+path = "{org_file}"
+""",
+        monkeypatch,
+    )
+    return org_file
+
+
+def test_backup_endpoint_creates_backup_of_current_contents(tmp_path: Path, monkeypatch) -> None:
+    org_file = _configure_backup_file(tmp_path, monkeypatch)
+    original_text = org_file.read_text(encoding="utf-8")
+    client = TestClient(create_app())
+
+    response = client.post("/api/v1/files/work/backups")
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["file_id"] == "work"
+    assert body["filename"].startswith("work.org.bak.")
+    assert body["created_at"]
+
+    backup_path = tmp_path / body["filename"]
+    assert backup_path.exists()
+    assert backup_path.read_text(encoding="utf-8") == original_text
+
+
+def test_backup_endpoint_lists_created_backups_oldest_first(tmp_path: Path, monkeypatch) -> None:
+    _configure_backup_file(tmp_path, monkeypatch)
+    (tmp_path / "work.org.bak.20260101T120000000000").write_text("old", encoding="utf-8")
+    client = TestClient(create_app())
+
+    created = client.post("/api/v1/files/work/backups")
+    assert created.status_code == 201
+
+    response = client.get("/api/v1/files/work/backups")
+
+    assert response.status_code == 200
+    body = response.json()
+    filenames = [backup["filename"] for backup in body["backups"]]
+    assert filenames == ["work.org.bak.20260101T120000000000", created.json()["filename"]]
+    assert body["backups"][0]["created_at"].startswith("2026-01-01T12:00:00")
+    assert all(backup["file_id"] == "work" for backup in body["backups"])
+
+
+def test_backup_endpoint_returns_empty_list_without_backups(tmp_path: Path, monkeypatch) -> None:
+    _configure_backup_file(tmp_path, monkeypatch)
+    client = TestClient(create_app())
+
+    response = client.get("/api/v1/files/work/backups")
+
+    assert response.status_code == 200
+    assert response.json() == {"backups": []}
+
+
+def test_backup_endpoint_ignores_files_without_valid_timestamp(tmp_path: Path, monkeypatch) -> None:
+    org_file = _configure_backup_file(tmp_path, monkeypatch)
+    (org_file.parent / "work.org.bak.manual-copy").write_text("stray", encoding="utf-8")
+    client = TestClient(create_app())
+
+    response = client.get("/api/v1/files/work/backups")
+
+    assert response.status_code == 200
+    assert response.json() == {"backups": []}
+
+
+def test_backup_endpoint_unknown_file_id_returns_404(tmp_path: Path, monkeypatch) -> None:
+    _configure_backup_file(tmp_path, monkeypatch)
+    client = TestClient(create_app())
+
+    post_response = client.post("/api/v1/files/other/backups")
+    get_response = client.get("/api/v1/files/other/backups")
+
+    assert post_response.status_code == 404
+    assert post_response.json()["detail"]["code"] == "unknown_file_id"
+    assert get_response.status_code == 404
+    assert get_response.json()["detail"]["code"] == "unknown_file_id"
+
+
+def test_backup_endpoint_missing_file_returns_422(tmp_path: Path, monkeypatch) -> None:
+    _configure_backup_file(tmp_path, monkeypatch)
+    missing = tmp_path / "work.org"
+    missing.unlink()
+    client = TestClient(create_app())
+
+    response = client.post("/api/v1/files/work/backups")
+
+    assert response.status_code == 422
+
+
+def test_backup_endpoint_works_in_read_only_mode(tmp_path: Path, monkeypatch) -> None:
+    org_file = tmp_path / "work.org"
+    org_file.write_text(
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+        encoding="utf-8",
+    )
+    _write_config(
+        tmp_path,
+        f"""
+timezone = "Europe/Vienna"
+write_mode = "read-only"
+
+[[files]]
+id = "work"
+path = "{org_file}"
+""",
+        monkeypatch,
+    )
+    client = TestClient(create_app())
+
+    response = client.post("/api/v1/files/work/backups")
+
+    assert response.status_code == 201

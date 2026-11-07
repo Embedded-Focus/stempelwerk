@@ -5,9 +5,22 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query
 
 from stempelwerk.config import load_config
-from stempelwerk.domain import ClockEntriesResponse, ClockUpdateRequest, Heading, StatusResponse
+from stempelwerk.domain import (
+    BackupInfo,
+    BackupsListResponse,
+    ClockEntriesResponse,
+    ClockUpdateRequest,
+    Heading,
+    StatusResponse,
+)
 from stempelwerk.org_reader import OrgReader, UnknownOrgFileError
-from stempelwerk.org_writer import ClockNotFoundError, OrgWriter, RevisionConflictError
+from stempelwerk.org_writer import (
+    ClockNotFoundError,
+    OrgWriter,
+    RevisionConflictError,
+    backup_created_at,
+    list_backups,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -141,3 +154,51 @@ def update_clock(clock_id: str, payload: ClockUpdateRequest) -> None:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
     logger.info("Updated clock %s", clock_id)
+
+
+def _configured_file(config, file_id: str):
+    return next((file for file in config.files if file.id == file_id), None)
+
+
+@router.post("/files/{file_id}/backups", status_code=201, response_model=BackupInfo)
+def create_file_backup(file_id: str) -> BackupInfo:
+    config = load_config()
+    reader = OrgReader(config.files, config.timezone)
+    writer = OrgWriter()
+    try:
+        backup_path = writer.create_backup(reader, file_id)
+    except UnknownOrgFileError as error:
+        logger.warning(
+            "Rejected backup creation: unknown Org file id(s) %s", ", ".join(error.file_ids)
+        )
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "unknown_file_id", "files": error.file_ids},
+        ) from error
+    except FileNotFoundError as error:
+        logger.warning("Rejected backup creation: %s", error)
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    logger.info("Created backup %s", backup_path)
+    created_at = backup_created_at(backup_path.name)
+    assert created_at is not None
+    return BackupInfo(file_id=file_id, filename=backup_path.name, created_at=created_at)
+
+
+@router.get("/files/{file_id}/backups", response_model=BackupsListResponse)
+def list_file_backups(file_id: str) -> BackupsListResponse:
+    config = load_config()
+    file_config = _configured_file(config, file_id)
+    if file_config is None:
+        logger.warning("Rejected backup listing: unknown Org file id %s", file_id)
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "unknown_file_id", "files": [file_id]},
+        )
+
+    backups = []
+    for entry in list_backups(file_config.path):
+        created_at = backup_created_at(entry.name)
+        assert created_at is not None
+        backups.append(BackupInfo(file_id=file_id, filename=entry.name, created_at=created_at))
+    return BackupsListResponse(backups=backups)

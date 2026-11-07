@@ -49,6 +49,16 @@ class StatusResponse(BaseModel):
     file_colors: dict[str, str] = Field(default_factory=dict)
 
 
+class BackupInfo(BaseModel):
+    file_id: str
+    filename: str
+    created_at: datetime
+
+
+class BackupsListResponse(BaseModel):
+    backups: list[BackupInfo]
+
+
 class ApiErrorBody(BaseModel):
     code: str
     message: str

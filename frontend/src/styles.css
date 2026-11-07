@@ -384,10 +384,6 @@ body {
   cursor: pointer;
 }
 
-.stats-toggle:hover {
-  background: color-mix(in srgb, CanvasText 8%, transparent);
-}
-
 .stats-toggle-arrow {
   display: inline-block;
   transition: transform 0.15s ease;

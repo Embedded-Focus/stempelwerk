@@ -60,3 +60,11 @@ Thumbs.db
 .agent-shell/
 .agent-circus/
 .claude/
+.pi/
+opencode.json
+
+demo/org/*
+!demo/org/customers.org
+!demo/org/sample.org
+!demo/org/work.org
+.agents/

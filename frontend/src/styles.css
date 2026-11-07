@@ -279,7 +279,29 @@ body {
 }
 
 .heading-tree summary {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  list-style: none;
   cursor: pointer;
+}
+
+/* Safari still draws its own triangle without this rule. */
+.heading-tree summary::-webkit-details-marker {
+  display: none;
+}
+
+.heading-tree summary::before {
+  content: "▾";
+  flex: none;
+  width: 1em;
+  text-align: center;
+  transform: rotate(-90deg);
+  transition: transform 0.15s ease;
+}
+
+.heading-tree details[open] > summary::before {
+  transform: none;
 }
 
 .heading-tree-node {
@@ -291,6 +313,18 @@ body {
   cursor: pointer;
   padding: 2px 4px;
   border-radius: 4px;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.heading-tree-leaf {
+  padding-left: calc(1em + 4px);
+}
+
+.heading-tree-leaf > .heading-tree-node {
+  display: inline-block;
+  max-width: 100%;
 }
 
 .heading-tree-node:disabled {

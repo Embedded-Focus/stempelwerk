@@ -108,6 +108,7 @@ export function createHeadingTree(options: HeadingTreeOptions): HTMLElement {
         }
         stack.push({ level, node, ul: childUl });
       } else {
+        item.classList.add("heading-tree-leaf");
         item.append(button);
         const node: HeadingNode = { heading, children: [], button, item, details: null };
         nodes.push(node);

@@ -363,7 +363,8 @@ body {
 .stats-panel.stats-collapsed .stats-tiles,
 .stats-panel.stats-collapsed .stats-body,
 .stats-panel.stats-collapsed .stats-note,
-.stats-panel.stats-collapsed .stats-empty {
+.stats-panel.stats-collapsed .stats-empty,
+.stats-panel.stats-collapsed .stats-group-label {
   display: none;
 }
 

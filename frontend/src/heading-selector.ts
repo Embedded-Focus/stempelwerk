@@ -150,9 +150,6 @@ function nodeLabel(heading: Heading): string {
     parts.push(heading.todo);
   }
   parts.push(heading.title);
-  if (heading.tags.length > 0) {
-    parts.push(`:${heading.tags.join(":")}:`);
-  }
   return parts.join(" ");
 }
 
@@ -259,7 +256,6 @@ function applySearch(
     const heading = node.heading;
     return (
       heading.outline.join(" / ").toLowerCase().includes(query) ||
-      heading.tags.some((tag) => tag.toLowerCase().includes(query)) ||
       (heading.todo !== null && heading.todo.toLowerCase().includes(query))
     );
   };

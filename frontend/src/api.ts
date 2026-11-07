@@ -20,6 +20,16 @@ export interface ClockEntry {
   editable: boolean;
 }
 
+export interface Heading {
+  id: string;
+  file_id: string;
+  title: string;
+  outline: string[];
+  tags: string[];
+  todo: string | null;
+  stable: boolean;
+}
+
 export interface ClockEntriesResponse {
   clocks: ClockEntry[];
   revisions: Record<string, string>;
@@ -61,6 +71,14 @@ async function readErrorCode(response: Response): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+export async function listHeadings(): Promise<Heading[]> {
+  const response = await fetch("/api/v1/headings");
+  if (!response.ok) {
+    throw new Error(`Heading request failed: ${response.status}`);
+  }
+  return response.json() as Promise<Heading[]>;
 }
 
 export class ClockUpdateError extends Error {
@@ -115,15 +133,21 @@ export async function updateClock(params: {
   start: string;
   end: string;
   expectedRevision: string;
+  headingId?: string;
 }): Promise<ClockEntry> {
+  const body: Record<string, string> = {
+    start: params.start,
+    end: params.end,
+    expected_revision: params.expectedRevision
+  };
+  if (params.headingId !== undefined) {
+    body.heading_id = params.headingId;
+  }
+
   const response = await fetch(`/api/v1/clocks/${encodeURIComponent(params.id)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      start: params.start,
-      end: params.end,
-      expected_revision: params.expectedRevision
-    })
+    body: JSON.stringify(body)
   });
 
   if (!response.ok) {

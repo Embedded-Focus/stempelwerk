@@ -16,6 +16,10 @@ from stempelwerk.org_reader import (
 from stempelwerk.revisions import revision_for_bytes
 
 _BACKUP_NAME_RE = re.compile(r"^.+\.bak\.(?P<timestamp>\d{8}T\d{12})$")
+_LOGBOOK_RE = re.compile(r"^(?P<indent>\s*):LOGBOOK:\s*$")
+_PROPERTIES_RE = re.compile(r"^\s*:PROPERTIES:\s*$")
+_END_RE = re.compile(r"^\s*:END:\s*$")
+_PLANNING_RE = re.compile(r"^\s*(SCHEDULED|DEADLINE|CLOSED):")
 
 _WEEKDAY_ABBREVIATIONS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
@@ -100,6 +104,23 @@ def format_clock_duration(start: datetime, end: datetime) -> str:
     return f"{hours}:{minutes:02d}"
 
 
+def format_clock_line(indent: str, start: datetime, end: datetime) -> str:
+    """Return a CLOCK line without line break. start and end are local and whole minutes."""
+
+    return (
+        f"{indent}CLOCK: {format_clock_timestamp(start)}--{format_clock_timestamp(end)}"
+        f" =>  {format_clock_duration(start, end)}"
+    )
+
+
+def _line_break(line: str) -> str:
+    if line.endswith("\r\n"):
+        return "\r\n"
+    if line.endswith("\n"):
+        return "\n"
+    return "\n"
+
+
 class OrgWriter:
     """Lossless CLOCK line editor boundary."""
 
@@ -129,10 +150,7 @@ class OrgWriter:
         local_start = start.astimezone(reader.timezone).replace(second=0, microsecond=0)
         local_end = end.astimezone(reader.timezone).replace(second=0, microsecond=0)
         indent = parsed.line[: len(parsed.line) - len(parsed.line.lstrip())]
-        replacement = (
-            f"{indent}CLOCK: {format_clock_timestamp(local_start)}--{format_clock_timestamp(local_end)}"
-            f" =>  {format_clock_duration(local_start, local_end)}"
-        )
+        replacement = format_clock_line(indent, local_start, local_end)
 
         edit = TextEdit(start=parsed.line_start, end=parsed.line_end, replacement=replacement)
         updated_text = self.replace_clock_line(text, edit)
@@ -146,6 +164,118 @@ class OrgWriter:
         if updated is None:
             raise RuntimeError(f"Updated clock {new_id} not found after write")
         return updated.entry
+
+    def move_clock(
+        self,
+        reader: OrgReader,
+        clock_id: str,
+        target_heading_id: str,
+        start: datetime,
+        end: datetime,
+        expected_revision: str,
+    ) -> ClockEntry:
+        """Move one CLOCK line into the target heading's drawer."""
+
+        file_config = reader.resolve_file(clock_id)
+        if file_config is None:
+            raise ClockNotFoundError(clock_id)
+
+        text = _read_at_revision(file_config.path, expected_revision)
+
+        parsed = reader.find_clock(clock_id)
+        if parsed is None:
+            raise ClockNotFoundError(clock_id)
+
+        target = reader.find_heading(file_config.id, target_heading_id)
+        if target is None:
+            raise HeadingNotFoundError(target_heading_id)
+
+        if target.id == parsed.entry.heading_id:
+            return self.update_clock(reader, clock_id, start, end, expected_revision)
+
+        local_start = start.astimezone(reader.timezone).replace(second=0, microsecond=0)
+        local_end = end.astimezone(reader.timezone).replace(second=0, microsecond=0)
+
+        lines = text.splitlines(keepends=True)
+        h = target.line_number - 1
+
+        # Find the insertion point in the target section.
+        section_end = len(lines)
+        for i in range(h + 1, len(lines)):
+            if HEADING_RE.match(lines[i].rstrip("\r\n")):
+                section_end = i
+                break
+
+        logbook_match = None
+        for i in range(h + 1, section_end):
+            match = _LOGBOOK_RE.match(lines[i].rstrip("\r\n"))
+            if match is not None:
+                logbook_match = (i, match)
+                break
+
+        creates_drawer = logbook_match is None
+        if logbook_match is not None:
+            d, match = logbook_match
+            insert_at = d + 1
+            br = _line_break(lines[d])
+            new_lines = [format_clock_line(match.group("indent"), local_start, local_end) + br]
+        else:
+            p = h + 1
+            if p < section_end and _PLANNING_RE.match(lines[p].rstrip("\r\n")):
+                p += 1
+            if p < section_end and _PROPERTIES_RE.match(lines[p].rstrip("\r\n")):
+                end_at = next(
+                    (
+                        i
+                        for i in range(p + 1, section_end)
+                        if _END_RE.match(lines[i].rstrip("\r\n"))
+                    ),
+                    None,
+                )
+                if end_at is not None:
+                    p = end_at + 1
+            insert_at = p
+            br = _line_break(lines[h])
+            new_lines = [
+                ":LOGBOOK:" + br,
+                format_clock_line("", local_start, local_end) + br,
+                ":END:" + br,
+            ]
+
+        if insert_at > 0 and not lines[insert_at - 1].endswith(("\n", "\r\n")):
+            lines[insert_at - 1] += br
+
+        # Remove the source line and an empty source drawer.
+        c = parsed.line_number - 1
+        remove = [c]
+        if (
+            c - 1 >= 0
+            and _LOGBOOK_RE.match(lines[c - 1].rstrip("\r\n"))
+            and c + 1 < len(lines)
+            and _END_RE.match(lines[c + 1].rstrip("\r\n"))
+        ):
+            remove = [c - 1, c, c + 1]
+
+        # Apply the change with the higher index first.
+        if insert_at > max(remove):
+            lines[insert_at:insert_at] = new_lines
+            del lines[min(remove) : max(remove) + 1]
+        else:
+            del lines[min(remove) : max(remove) + 1]
+            lines[insert_at:insert_at] = new_lines
+
+        # Compute the final 1-based line number of the moved clock line.
+        index = insert_at + (1 if creates_drawer else 0)
+        if max(remove) < insert_at:
+            index -= len(remove)
+        final_line_number = index + 1
+
+        _write_atomically(file_config.path, "".join(lines))
+
+        moved = reader.clock_at_line(file_config.id, final_line_number)
+        if moved is None:
+            raise RuntimeError("Moved clock not found after write")
+        return moved.entry
 
     def create_backup(self, reader: OrgReader, file_id: str) -> Path:
         """Create a backup of the current contents of a configured Org file."""

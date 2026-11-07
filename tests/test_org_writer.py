@@ -8,6 +8,7 @@ import pytest
 from stempelwerk.config import OrgFileConfig
 from stempelwerk.org_reader import OrgReader, UnknownOrgFileError
 from stempelwerk.org_writer import (
+    ClockNotFoundError,
     HeadingNotFoundError,
     InvalidHeadingTitleError,
     OrgWriter,
@@ -412,3 +413,486 @@ def test_rename_heading_creates_no_backup(tmp_path: Path) -> None:
 
 def _heading_id_by_outline(reader: OrgReader, outline: list[str]) -> str:
     return next(heading.id for heading in reader.list_headings() if heading.outline == outline)
+
+
+def _heading_id_by_title(reader: OrgReader, title: str) -> str:
+    return next(h.id for h in reader.list_headings() if h.title == title)
+
+
+def test_move_clock_into_existing_drawer_inserts_first(tmp_path: Path) -> None:
+    reader, org_file = _reader(
+        tmp_path,
+        "* Source\n"
+        ":LOGBOOK:\n"
+        "CLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n"
+        ":END:\n"
+        "* Target\n"
+        ":LOGBOOK:\n"
+        "CLOCK: [2026-07-30 Thu 08:00]--[2026-07-30 Thu 09:00] =>  1:00\n"
+        ":END:\n",
+    )
+    clock = reader.list_clocks(
+        start=datetime(2026, 7, 30, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 8, 2, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+    )[0][0]
+    target_id = _heading_id_by_title(reader, "Target")
+
+    moved = OrgWriter().move_clock(
+        reader,
+        clock.id,
+        target_id,
+        start=datetime(2026, 7, 31, 11, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 7, 31, 12, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        expected_revision=clock.revision,
+    )
+
+    assert moved.heading_title == "Target"
+    assert org_file.read_text(encoding="utf-8") == (
+        "* Source\n"
+        "* Target\n"
+        ":LOGBOOK:\n"
+        "CLOCK: [2026-07-31 Fri 11:00]--[2026-07-31 Fri 12:00] =>  1:00\n"
+        "CLOCK: [2026-07-30 Thu 08:00]--[2026-07-30 Thu 09:00] =>  1:00\n"
+        ":END:\n"
+    )
+
+
+def test_move_clock_into_indented_drawer_keeps_indent(tmp_path: Path) -> None:
+    reader, org_file = _reader(
+        tmp_path,
+        "* Source\n"
+        ":LOGBOOK:\n"
+        "CLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n"
+        ":END:\n"
+        "* Target\n"
+        " :LOGBOOK:\n"
+        " :END:\n",
+    )
+    clock = reader.list_clocks(
+        start=datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+    )[0][0]
+    target_id = _heading_id_by_title(reader, "Target")
+
+    OrgWriter().move_clock(
+        reader,
+        clock.id,
+        target_id,
+        start=datetime(2026, 7, 31, 11, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 7, 31, 12, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        expected_revision=clock.revision,
+    )
+
+    assert org_file.read_text(encoding="utf-8") == (
+        "* Source\n"
+        "* Target\n"
+        " :LOGBOOK:\n"
+        " CLOCK: [2026-07-31 Fri 11:00]--[2026-07-31 Fri 12:00] =>  1:00\n"
+        " :END:\n"
+    )
+
+
+def test_move_clock_creates_drawer_directly_after_heading(tmp_path: Path) -> None:
+    reader, org_file = _reader(
+        tmp_path,
+        "* Source\n:LOGBOOK:\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n:END:\n* Target\n",
+    )
+    clock = reader.list_clocks(
+        start=datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+    )[0][0]
+    target_id = _heading_id_by_title(reader, "Target")
+
+    moved = OrgWriter().move_clock(
+        reader,
+        clock.id,
+        target_id,
+        start=datetime(2026, 7, 31, 11, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 7, 31, 12, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        expected_revision=clock.revision,
+    )
+
+    assert moved.heading_title == "Target"
+    assert org_file.read_text(encoding="utf-8") == (
+        "* Source\n"
+        "* Target\n"
+        ":LOGBOOK:\n"
+        "CLOCK: [2026-07-31 Fri 11:00]--[2026-07-31 Fri 12:00] =>  1:00\n"
+        ":END:\n"
+    )
+
+
+def test_move_clock_creates_drawer_after_planning_line(tmp_path: Path) -> None:
+    reader, org_file = _reader(
+        tmp_path,
+        "* Source\n"
+        ":LOGBOOK:\n"
+        "CLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n"
+        ":END:\n"
+        "* Target\n"
+        "SCHEDULED: <2026-08-01 Sat>\n",
+    )
+    clock = reader.list_clocks(
+        start=datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+    )[0][0]
+    target_id = _heading_id_by_title(reader, "Target")
+
+    OrgWriter().move_clock(
+        reader,
+        clock.id,
+        target_id,
+        start=datetime(2026, 7, 31, 11, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 7, 31, 12, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        expected_revision=clock.revision,
+    )
+
+    assert org_file.read_text(encoding="utf-8") == (
+        "* Source\n"
+        "* Target\n"
+        "SCHEDULED: <2026-08-01 Sat>\n"
+        ":LOGBOOK:\n"
+        "CLOCK: [2026-07-31 Fri 11:00]--[2026-07-31 Fri 12:00] =>  1:00\n"
+        ":END:\n"
+    )
+
+
+def test_move_clock_creates_drawer_after_properties(tmp_path: Path) -> None:
+    reader, org_file = _reader(
+        tmp_path,
+        "* Source\n"
+        ":LOGBOOK:\n"
+        "CLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n"
+        ":END:\n"
+        "* Target\n"
+        "DEADLINE: <2023-02-02 Thu>\n"
+        ":PROPERTIES:\n"
+        ":ARCHIVE_TIME: 2023-02-02 Thu 11:10\n"
+        ":END:\n",
+    )
+    clock = reader.list_clocks(
+        start=datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+    )[0][0]
+    target_id = _heading_id_by_title(reader, "Target")
+
+    OrgWriter().move_clock(
+        reader,
+        clock.id,
+        target_id,
+        start=datetime(2026, 7, 31, 11, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 7, 31, 12, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        expected_revision=clock.revision,
+    )
+
+    assert org_file.read_text(encoding="utf-8") == (
+        "* Source\n"
+        "* Target\n"
+        "DEADLINE: <2023-02-02 Thu>\n"
+        ":PROPERTIES:\n"
+        ":ARCHIVE_TIME: 2023-02-02 Thu 11:10\n"
+        ":END:\n"
+        ":LOGBOOK:\n"
+        "CLOCK: [2026-07-31 Fri 11:00]--[2026-07-31 Fri 12:00] =>  1:00\n"
+        ":END:\n"
+    )
+
+
+def test_move_clock_creates_drawer_between_heading_and_first_child(
+    tmp_path: Path,
+) -> None:
+    reader, org_file = _reader(
+        tmp_path,
+        "* Source\n:LOGBOOK:\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n:END:\n* Target\n** Child\n",
+    )
+    clock = reader.list_clocks(
+        start=datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+    )[0][0]
+    target_id = _heading_id_by_title(reader, "Target")
+
+    OrgWriter().move_clock(
+        reader,
+        clock.id,
+        target_id,
+        start=datetime(2026, 7, 31, 11, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 7, 31, 12, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        expected_revision=clock.revision,
+    )
+
+    assert org_file.read_text(encoding="utf-8") == (
+        "* Source\n"
+        "* Target\n"
+        ":LOGBOOK:\n"
+        "CLOCK: [2026-07-31 Fri 11:00]--[2026-07-31 Fri 12:00] =>  1:00\n"
+        ":END:\n"
+        "** Child\n"
+    )
+
+
+def test_move_clock_removes_empty_source_drawer(tmp_path: Path) -> None:
+    reader, org_file = _reader(
+        tmp_path,
+        "* Source\n:LOGBOOK:\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n:END:\n* Target\n",
+    )
+    clock = reader.list_clocks(
+        start=datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+    )[0][0]
+    target_id = _heading_id_by_title(reader, "Target")
+
+    OrgWriter().move_clock(
+        reader,
+        clock.id,
+        target_id,
+        start=datetime(2026, 7, 31, 11, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 7, 31, 12, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        expected_revision=clock.revision,
+    )
+
+    assert ":LOGBOOK:" not in org_file.read_text(encoding="utf-8").split("* Target")[0]
+
+
+def test_move_clock_keeps_drawer_with_remaining_clock(tmp_path: Path) -> None:
+    reader, org_file = _reader(
+        tmp_path,
+        "* Source\n"
+        ":LOGBOOK:\n"
+        "CLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n"
+        "CLOCK: [2026-07-31 Fri 13:00]--[2026-07-31 Fri 14:00] =>  1:00\n"
+        ":END:\n"
+        "* Target\n",
+    )
+    clocks, _ = reader.list_clocks(
+        start=datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+    )
+    first = next(c for c in clocks if c.start.hour == 9)
+    target_id = _heading_id_by_title(reader, "Target")
+
+    OrgWriter().move_clock(
+        reader,
+        first.id,
+        target_id,
+        start=datetime(2026, 7, 31, 11, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 7, 31, 12, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        expected_revision=first.revision,
+    )
+
+    assert org_file.read_text(encoding="utf-8") == (
+        "* Source\n"
+        ":LOGBOOK:\n"
+        "CLOCK: [2026-07-31 Fri 13:00]--[2026-07-31 Fri 14:00] =>  1:00\n"
+        ":END:\n"
+        "* Target\n"
+        ":LOGBOOK:\n"
+        "CLOCK: [2026-07-31 Fri 11:00]--[2026-07-31 Fri 12:00] =>  1:00\n"
+        ":END:\n"
+    )
+
+
+def test_move_clock_removes_bare_clock_line(tmp_path: Path) -> None:
+    reader, org_file = _reader(
+        tmp_path,
+        "* Source\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n* Target\n",
+    )
+    clock = reader.list_clocks(
+        start=datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+    )[0][0]
+    target_id = _heading_id_by_title(reader, "Target")
+
+    OrgWriter().move_clock(
+        reader,
+        clock.id,
+        target_id,
+        start=datetime(2026, 7, 31, 11, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 7, 31, 12, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        expected_revision=clock.revision,
+    )
+
+    assert org_file.read_text(encoding="utf-8") == (
+        "* Source\n"
+        "* Target\n"
+        ":LOGBOOK:\n"
+        "CLOCK: [2026-07-31 Fri 11:00]--[2026-07-31 Fri 12:00] =>  1:00\n"
+        ":END:\n"
+    )
+
+
+def test_move_clock_to_target_above_source(tmp_path: Path) -> None:
+    reader, org_file = _reader(
+        tmp_path,
+        "* Target\n:LOGBOOK:\nCLOCK: [2026-07-30 Thu 08:00]--[2026-07-30 Thu 09:00] =>  1:00\n:END:\n* Source\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+    )
+    clock = reader.list_clocks(
+        start=datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+    )[0][0]
+    target_id = _heading_id_by_title(reader, "Target")
+
+    moved = OrgWriter().move_clock(
+        reader,
+        clock.id,
+        target_id,
+        start=datetime(2026, 7, 31, 11, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 7, 31, 12, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        expected_revision=clock.revision,
+    )
+
+    assert moved.heading_title == "Target"
+    assert org_file.read_text(encoding="utf-8") == (
+        "* Target\n"
+        ":LOGBOOK:\n"
+        "CLOCK: [2026-07-31 Fri 11:00]--[2026-07-31 Fri 12:00] =>  1:00\n"
+        "CLOCK: [2026-07-30 Thu 08:00]--[2026-07-30 Thu 09:00] =>  1:00\n"
+        ":END:\n"
+        "* Source\n"
+    )
+
+
+def test_move_clock_to_last_heading_without_final_break(tmp_path: Path) -> None:
+    reader, org_file = _reader(
+        tmp_path,
+        "* Source\n:LOGBOOK:\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n:END:\n* Target",
+    )
+    clock = reader.list_clocks(
+        start=datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+    )[0][0]
+    target_id = _heading_id_by_title(reader, "Target")
+
+    OrgWriter().move_clock(
+        reader,
+        clock.id,
+        target_id,
+        start=datetime(2026, 7, 31, 11, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 7, 31, 12, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        expected_revision=clock.revision,
+    )
+
+    content = org_file.read_text(encoding="utf-8")
+    assert content == (
+        "* Source\n"
+        "* Target\n"
+        ":LOGBOOK:\n"
+        "CLOCK: [2026-07-31 Fri 11:00]--[2026-07-31 Fri 12:00] =>  1:00\n"
+        ":END:\n"
+    )
+    assert all(line.endswith("\n") for line in content.splitlines(keepends=True))
+
+
+def test_move_clock_uses_crlf_line_breaks(tmp_path: Path) -> None:
+    reader, org_file = _reader(
+        tmp_path,
+        "* Source\r\n:LOGBOOK:\r\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\r\n:END:\r\n* Target\r\n",
+    )
+    clock = reader.list_clocks(
+        start=datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+    )[0][0]
+    target_id = _heading_id_by_title(reader, "Target")
+
+    OrgWriter().move_clock(
+        reader,
+        clock.id,
+        target_id,
+        start=datetime(2026, 7, 31, 11, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 7, 31, 12, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        expected_revision=clock.revision,
+    )
+
+    assert org_file.read_bytes() == (
+        b"* Source\r\n"
+        b"* Target\r\n"
+        b":LOGBOOK:\r\n"
+        b"CLOCK: [2026-07-31 Fri 11:00]--[2026-07-31 Fri 12:00] =>  1:00\r\n"
+        b":END:\r\n"
+    )
+
+
+def test_move_clock_to_current_heading_updates_times_only(tmp_path: Path) -> None:
+    reader, org_file = _reader(
+        tmp_path,
+        "* Work\n:LOGBOOK:\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n:END:\n",
+    )
+    clock = reader.list_clocks(
+        start=datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+    )[0][0]
+    heading_id = next(h.id for h in reader.list_headings() if h.title == "Work")
+    before = org_file.read_bytes()
+
+    moved = OrgWriter().move_clock(
+        reader,
+        clock.id,
+        heading_id,
+        start=datetime(2026, 7, 31, 11, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 7, 31, 12, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        expected_revision=clock.revision,
+    )
+
+    assert moved.heading_title == "Work"
+    assert org_file.read_bytes() != before
+    assert org_file.read_text(encoding="utf-8") == (
+        "* Work\n:LOGBOOK:\nCLOCK: [2026-07-31 Fri 11:00]--[2026-07-31 Fri 12:00] =>  1:00\n:END:\n"
+    )
+
+
+def test_move_clock_rejects_stale_revision(tmp_path: Path) -> None:
+    reader, org_file = _reader(
+        tmp_path,
+        "* Source\n:LOGBOOK:\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n:END:\n* Target\n",
+    )
+    clock = reader.list_clocks(
+        start=datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+    )[0][0]
+    target_id = _heading_id_by_title(reader, "Target")
+    before = org_file.read_bytes()
+
+    with pytest.raises(RevisionConflictError):
+        OrgWriter().move_clock(
+            reader,
+            clock.id,
+            target_id,
+            start=datetime(2026, 7, 31, 11, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+            end=datetime(2026, 7, 31, 12, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+            expected_revision="sha256:stale",
+        )
+
+    assert org_file.read_bytes() == before
+
+
+def test_move_clock_unknown_clock_or_target_raises(tmp_path: Path) -> None:
+    reader, org_file = _reader(
+        tmp_path,
+        "* Source\n:LOGBOOK:\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n:END:\n* Target\n",
+    )
+    clock = reader.list_clocks(
+        start=datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+    )[0][0]
+    target_id = _heading_id_by_title(reader, "Target")
+    before = org_file.read_bytes()
+
+    with pytest.raises(ClockNotFoundError):
+        OrgWriter().move_clock(
+            reader,
+            "clock:work:missing",
+            target_id,
+            start=datetime(2026, 7, 31, 11, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+            end=datetime(2026, 7, 31, 12, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+            expected_revision=clock.revision,
+        )
+    with pytest.raises(HeadingNotFoundError):
+        OrgWriter().move_clock(
+            reader,
+            clock.id,
+            "heading:missing",
+            start=datetime(2026, 7, 31, 11, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+            end=datetime(2026, 7, 31, 12, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+            expected_revision=clock.revision,
+        )
+
+    assert org_file.read_bytes() == before

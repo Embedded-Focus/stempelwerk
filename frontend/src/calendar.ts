@@ -19,7 +19,10 @@ import {
   updateClock,
   type StatusResponse
 } from "./api";
-import { openRenameDialog } from "./clock-dialog";
+import {
+  openEntryDialog,
+  type EntryDialogValues
+} from "./clock-dialog";
 import { mountDebugPanel } from "./debug-panel";
 import "./styles.css";
 
@@ -170,7 +173,7 @@ const calendar = new Calendar(calendarElement, {
     }
     info.el.addEventListener("dblclick", (event: MouseEvent) => {
       event.preventDefault();
-      handleEventClick(info.event);
+      handleEventOpen(info.event);
     });
   },
   eventDrop: (info: EventDropArg) => {
@@ -195,7 +198,7 @@ const calendar = new Calendar(calendarElement, {
   }
 });
 
-const handleEventClick = (event: EventApi): void => {
+const handleEventOpen = (event: EventApi): void => {
   if (writeMode === "read-only" || writeMode === "emacs") {
     statusLine.textContent = "Renaming is not available in this write mode";
     return;
@@ -218,11 +221,11 @@ const handleEventClick = (event: EventApi): void => {
     return;
   }
 
-  openRenameDialog({
+  openEntryDialog({
     fileId,
     outline: outline.filter((part): part is string => typeof part === "string"),
     title: event.title,
-    onSave: async (title: string) => {
+    onSave: async ({ title }: EntryDialogValues) => {
       try {
         await renameHeading({
           fileId,

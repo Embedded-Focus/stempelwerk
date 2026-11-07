@@ -1,18 +1,22 @@
-export interface RenameDialogOptions {
+export interface EntryDialogOptions {
   fileId: string;
   outline: string[];
   title: string;
-  /** Called with the new title. Resolve to close the dialog; reject to keep it open. */
-  onSave: (title: string) => Promise<void>;
+  /** Called with the new values. Resolve to close the dialog; reject to keep it open. */
+  onSave: (values: EntryDialogValues) => Promise<void>;
 }
 
-export function openRenameDialog(options: RenameDialogOptions): void {
+export interface EntryDialogValues {
+  title: string;
+}
+
+export function openEntryDialog(options: EntryDialogOptions): void {
   const dialog = document.createElement("dialog");
   dialog.className = "clock-dialog";
 
   const heading = document.createElement("h2");
   heading.className = "clock-dialog-heading";
-  heading.textContent = "Rename heading";
+  heading.textContent = "Edit entry";
 
   const source = document.createElement("p");
   source.className = "clock-dialog-source";
@@ -78,10 +82,11 @@ export function openRenameDialog(options: RenameDialogOptions): void {
     saveButton.disabled = true;
     errorArea.textContent = "";
     try {
-      await options.onSave(input.value);
+      await options.onSave({ title: input.value });
       dialog.close();
     } catch (error: unknown) {
-      errorArea.textContent = error instanceof Error ? error.message : "Could not rename heading";
+      errorArea.textContent =
+        error instanceof Error ? error.message : "Could not save the entry";
       cancelButton.disabled = false;
       saveButton.disabled = false;
     }

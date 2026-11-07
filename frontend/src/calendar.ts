@@ -26,6 +26,7 @@ import {
   type EntryDialogValues
 } from "./clock-dialog";
 import { mountDebugPanel } from "./debug-panel";
+import { createStatsPanel, type StatsEntry } from "./stats-panel";
 import "./styles.css";
 
 const debugEnabled =
@@ -115,6 +116,8 @@ const handleClockChange = async (info: EventDropArg | EventResizeDoneArg): Promi
   }
 };
 
+const statsPanel = createStatsPanel({ colorForFile });
+
 const calendar = new Calendar(calendarElement, {
   plugins: [interactionPlugin, timeGridPlugin],
   initialView: "timeGridWeek",
@@ -199,8 +202,16 @@ const calendar = new Calendar(calendarElement, {
   },
   eventResizeStop: () => {
     dragActive = false;
+  },
+  eventsSet: () => {
+    updateStats();
+  },
+  datesSet: () => {
+    updateStats();
   }
 });
+
+calendarElement.after(statsPanel.element);
 
 const handleEventOpen = (event: EventApi): void => {
   if (writeMode === "read-only" || writeMode === "emacs") {
@@ -372,6 +383,38 @@ const handleEventOpen = (event: EventApi): void => {
           : "Heading renamed";
       calendar.refetchEvents();
     }
+  });
+}
+
+function updateStats(): void {
+  const view = calendar.view;
+  const entries: StatsEntry[] = [];
+  for (const event of calendar.getEvents()) {
+    const { fileId, headingId, outline } = event.extendedProps;
+    if (
+      event.start === null ||
+      event.end === null ||
+      typeof fileId !== "string" ||
+      typeof headingId !== "string" ||
+      !Array.isArray(outline)
+    ) {
+      continue;
+    }
+    entries.push({
+      start: event.start,
+      end: event.end,
+      fileId,
+      headingId,
+      title: event.title,
+      outline: outline.filter((part): part is string => typeof part === "string")
+    });
+  }
+  statsPanel.update({
+    entries,
+    rangeStart: view.activeStart,
+    rangeEnd: view.activeEnd,
+    rangeTitle: view.title,
+    isWeek: view.type === "timeGridWeek"
   });
 }
 

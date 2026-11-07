@@ -141,20 +141,39 @@ def update_clock(clock_id: str, payload: ClockUpdateRequest) -> ClockEntry:
 
     reader = OrgReader(config.files, config.timezone)
     writer = OrgWriter()
+    moving = payload.heading_id is not None
     try:
-        updated = writer.update_clock(
-            reader,
-            clock_id,
-            start=start,
-            end=end,
-            expected_revision=payload.expected_revision,
-        )
+        if moving:
+            assert payload.heading_id is not None
+            updated = writer.move_clock(
+                reader,
+                clock_id,
+                payload.heading_id,
+                start=start,
+                end=end,
+                expected_revision=payload.expected_revision,
+            )
+        else:
+            updated = writer.update_clock(
+                reader,
+                clock_id,
+                start=start,
+                end=end,
+                expected_revision=payload.expected_revision,
+            )
     except ClockNotFoundError as error:
         logger.warning(
             "Rejected update of clock %s: no clock with that id exists in the current file",
             clock_id,
         )
         raise HTTPException(status_code=404, detail={"code": "unknown_clock_id"}) from error
+    except HeadingNotFoundError as error:
+        logger.warning(
+            "Rejected update of clock %s: target heading %s is unknown or not in the clock's file",
+            clock_id,
+            error.heading_id,
+        )
+        raise HTTPException(status_code=404, detail={"code": "unknown_heading_id"}) from error
     except RevisionConflictError as error:
         logger.warning(
             "Rejected update of clock %s: expected revision %s but file is now at %s "
@@ -168,7 +187,13 @@ def update_clock(clock_id: str, payload: ClockUpdateRequest) -> ClockEntry:
         logger.warning("Rejected update of clock %s: %s", clock_id, error)
         raise HTTPException(status_code=422, detail=str(error)) from error
 
-    logger.info("Updated clock %s, new id %s", clock_id, updated.id)
+    if moving:
+        assert payload.heading_id is not None
+        logger.info(
+            "Moved clock %s to heading %s, new id %s", clock_id, payload.heading_id, updated.id
+        )
+    else:
+        logger.info("Updated clock %s, new id %s", clock_id, updated.id)
     return updated
 
 

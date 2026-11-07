@@ -853,3 +853,202 @@ def test_patch_clock_then_rename_with_returned_revision(tmp_path: Path, monkeypa
     )
 
     assert rename_response.status_code == 204
+
+
+def _heading_id_by_outline(client: TestClient, file_id: str, outline: list[str]) -> str:
+    return next(
+        h["id"]
+        for h in client.get("/api/v1/headings").json()
+        if h["outline"] == outline and h["file_id"] == file_id
+    )
+
+
+def test_patch_clock_with_heading_id_moves_the_entry(tmp_path: Path, monkeypatch) -> None:
+    org_file = _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Source\n:LOGBOOK:\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n:END:\n* Target\n",
+    )
+    client = TestClient(create_app())
+    window = {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+    clock = client.get("/api/v1/clocks", params=window).json()["clocks"][0]
+    target_id = _heading_id_by_outline(client, "work", ["Target"])
+
+    response = client.patch(
+        f"/api/v1/clocks/{clock['id']}",
+        json={
+            "start": clock["start"],
+            "end": clock["end"],
+            "expected_revision": clock["revision"],
+            "heading_id": target_id,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["heading_title"] == "Target"
+    assert body["outline"] == ["Target"]
+    assert org_file.read_text(encoding="utf-8") == (
+        "* Source\n"
+        "* Target\n"
+        ":LOGBOOK:\n"
+        "CLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n"
+        ":END:\n"
+    )
+
+    after = client.get("/api/v1/clocks", params=window).json()["clocks"]
+    assert len(after) == 1
+    assert after[0]["id"] == body["id"]
+    assert after[0]["revision"] == body["revision"]
+    assert after[0]["heading_title"] == "Target"
+
+
+def test_patch_clock_with_heading_id_and_new_times(tmp_path: Path, monkeypatch) -> None:
+    _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Source\n:LOGBOOK:\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n:END:\n* Target\n",
+    )
+    client = TestClient(create_app())
+    window = {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+    clock = client.get("/api/v1/clocks", params=window).json()["clocks"][0]
+    target_id = _heading_id_by_outline(client, "work", ["Target"])
+
+    response = client.patch(
+        f"/api/v1/clocks/{clock['id']}",
+        json={
+            "start": "2026-07-31T11:30:00+02:00",
+            "end": "2026-07-31T12:45:00+02:00",
+            "expected_revision": clock["revision"],
+            "heading_id": target_id,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["heading_title"] == "Target"
+    assert body["start"] == "2026-07-31T11:30:00+02:00"
+    assert body["duration_minutes"] == 75
+
+
+def test_patch_clock_rejects_heading_of_another_file(tmp_path: Path, monkeypatch) -> None:
+    work_file = tmp_path / "work.org"
+    work_file.write_text(
+        "* Source\n:LOGBOOK:\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n:END:\n",
+        encoding="utf-8",
+    )
+    other_file = tmp_path / "other.org"
+    other_file.write_text("* Other target\n", encoding="utf-8")
+    _write_config(
+        tmp_path,
+        f"""
+timezone = "Europe/Vienna"
+
+[[files]]
+id = "work"
+path = "{work_file}"
+
+[[files]]
+id = "other"
+path = "{other_file}"
+""",
+        monkeypatch,
+    )
+    client = TestClient(create_app())
+    window = {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+    clock = client.get("/api/v1/clocks", params=window).json()["clocks"][0]
+    other_target_id = _heading_id_by_outline(client, "other", ["Other target"])
+    work_before = work_file.read_bytes()
+    other_before = other_file.read_bytes()
+
+    response = client.patch(
+        f"/api/v1/clocks/{clock['id']}",
+        json={
+            "start": clock["start"],
+            "end": clock["end"],
+            "expected_revision": clock["revision"],
+            "heading_id": other_target_id,
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "unknown_heading_id"
+    assert work_file.read_bytes() == work_before
+    assert other_file.read_bytes() == other_before
+
+
+def test_patch_clock_rejects_unknown_heading_id(tmp_path: Path, monkeypatch) -> None:
+    _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Source\n:LOGBOOK:\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n:END:\n",
+    )
+    client = TestClient(create_app())
+    window = {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+    clock = client.get("/api/v1/clocks", params=window).json()["clocks"][0]
+
+    response = client.patch(
+        f"/api/v1/clocks/{clock['id']}",
+        json={
+            "start": clock["start"],
+            "end": clock["end"],
+            "expected_revision": clock["revision"],
+            "heading_id": "heading:missing",
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "unknown_heading_id"
+
+
+def test_patch_clock_move_rejects_stale_revision(tmp_path: Path, monkeypatch) -> None:
+    _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Source\n:LOGBOOK:\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n:END:\n* Target\n",
+    )
+    client = TestClient(create_app())
+    window = {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+    clock = client.get("/api/v1/clocks", params=window).json()["clocks"][0]
+    target_id = _heading_id_by_outline(client, "work", ["Target"])
+
+    response = client.patch(
+        f"/api/v1/clocks/{clock['id']}",
+        json={
+            "start": clock["start"],
+            "end": clock["end"],
+            "expected_revision": "sha256:stale",
+            "heading_id": target_id,
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "revision_conflict"
+
+
+def test_patch_clock_move_rejects_when_read_only(tmp_path: Path, monkeypatch, caplog) -> None:
+    _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Source\n:LOGBOOK:\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n:END:\n* Target\n",
+        write_mode="read-only",
+    )
+    client = TestClient(create_app())
+    window = {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+    clock = client.get("/api/v1/clocks", params=window).json()["clocks"][0]
+    target_id = _heading_id_by_outline(client, "work", ["Target"])
+
+    with caplog.at_level("WARNING", logger="stempelwerk.api.routes"):
+        response = client.patch(
+            f"/api/v1/clocks/{clock['id']}",
+            json={
+                "start": clock["start"],
+                "end": clock["end"],
+                "expected_revision": clock["revision"],
+                "heading_id": target_id,
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "read_only"
+    assert any("read-only" in record.message for record in caplog.records)

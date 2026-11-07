@@ -38,6 +38,7 @@ class ClockUpdateRequest(BaseModel):
     start: datetime
     end: datetime
     expected_revision: str
+    heading_id: str | None = None
 
 
 class HeadingRenameRequest(BaseModel):

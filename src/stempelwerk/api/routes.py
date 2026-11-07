@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query
 
-from stempelwerk.config import load_config
+from stempelwerk.config import AppConfig, load_config
 from stempelwerk.domain import (
     BackupInfo,
     BackupsListResponse,
@@ -98,6 +98,27 @@ def list_clocks(
     return ClockEntriesResponse(clocks=clocks, revisions=revisions)
 
 
+def _ensure_writable(config: AppConfig, action: str) -> None:
+    """Raise HTTPException if the configuration does not allow writes.
+
+    `action` describes the rejected request for the log, for example
+    "update of clock clock:work:abc".
+    """
+    if config.write_mode == "read-only":
+        logger.warning(
+            'Rejected %s: write_mode is "read-only" in the loaded config, '
+            'set write_mode to "auto" or "disk" to allow writes',
+            action,
+        )
+        raise HTTPException(status_code=422, detail={"code": "read_only"})
+    if config.write_mode == "emacs":
+        logger.warning(
+            'Rejected %s: write_mode is "emacs", but Emacs-mediated writes are not yet supported',
+            action,
+        )
+        raise HTTPException(status_code=422, detail={"code": "emacs_not_supported"})
+
+
 @router.patch("/clocks/{clock_id}", status_code=204)
 def update_clock(clock_id: str, payload: ClockUpdateRequest) -> None:
     if payload.end <= payload.start:
@@ -110,19 +131,7 @@ def update_clock(clock_id: str, payload: ClockUpdateRequest) -> None:
         raise HTTPException(status_code=422, detail={"code": "invalid_time_range"})
 
     config = load_config()
-    if config.write_mode == "read-only":
-        logger.warning(
-            'Rejected update of clock %s: write_mode is "read-only" in the loaded config, '
-            'set write_mode to "auto" or "disk" to allow writes',
-            clock_id,
-        )
-        raise HTTPException(status_code=422, detail={"code": "read_only"})
-    if config.write_mode == "emacs":
-        logger.warning(
-            'Rejected update of clock %s: write_mode is "emacs", but Emacs-mediated writes are not yet supported',
-            clock_id,
-        )
-        raise HTTPException(status_code=422, detail={"code": "emacs_not_supported"})
+    _ensure_writable(config, f"update of clock {clock_id}")
 
     reader = OrgReader(config.files, config.timezone)
     writer = OrgWriter()

@@ -59,6 +59,16 @@ def list_backups(path: Path) -> list[Path]:
     )
 
 
+def _read_at_revision(path: Path, expected_revision: str) -> str:
+    """Return the decoded file text, or raise RevisionConflictError."""
+
+    raw = path.read_bytes()
+    current_revision = revision_for_bytes(raw)
+    if current_revision != expected_revision:
+        raise RevisionConflictError(expected_revision, current_revision)
+    return raw.decode("utf-8")
+
+
 def format_clock_timestamp(moment: datetime) -> str:
     weekday = _WEEKDAY_ABBREVIATIONS[moment.weekday()]
     return f"[{moment:%Y-%m-%d} {weekday} {moment:%H:%M}]"
@@ -90,10 +100,7 @@ class OrgWriter:
         if file_config is None:
             raise ClockNotFoundError(clock_id)
 
-        raw = file_config.path.read_bytes()
-        current_revision = revision_for_bytes(raw)
-        if current_revision != expected_revision:
-            raise RevisionConflictError(expected_revision, current_revision)
+        text = _read_at_revision(file_config.path, expected_revision)
 
         parsed = reader.find_clock(clock_id)
         if parsed is None:
@@ -107,7 +114,7 @@ class OrgWriter:
             f" =>  {format_clock_duration(local_start, local_end)}"
         )
 
-        text = raw.decode("utf-8")
+        text = _read_at_revision(file_config.path, expected_revision)
         edit = TextEdit(start=parsed.line_start, end=parsed.line_end, replacement=replacement)
         updated_text = self.replace_clock_line(text, edit)
 

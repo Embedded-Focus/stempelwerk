@@ -8,7 +8,7 @@ export function mountDebugPanel(
   appElement: HTMLElement,
   fileIds: string[],
   hooks: DebugPanelHooks
-): void {
+): () => void {
   const calendarElement = appElement.querySelector<HTMLElement>("#calendar");
   if (!calendarElement) {
     throw new Error("Calendar root not found");
@@ -45,14 +45,26 @@ export function mountDebugPanel(
     panel.append(empty);
   }
 
+  const backupLists: { fileId: string; list: HTMLUListElement }[] = [];
   for (const fileId of fileIds) {
-    panel.append(buildFileSection(fileId, hooks));
+    const section = buildFileSection(fileId, hooks);
+    panel.append(section.element);
+    backupLists.push({ fileId, list: section.list });
   }
 
   appElement.insertBefore(panel, calendarElement);
+
+  return () => {
+    for (const { fileId, list } of backupLists) {
+      void refreshBackupList(fileId, list);
+    }
+  };
 }
 
-function buildFileSection(fileId: string, hooks: DebugPanelHooks): HTMLElement {
+function buildFileSection(
+  fileId: string,
+  hooks: DebugPanelHooks
+): { element: HTMLElement; list: HTMLUListElement } {
   const section = document.createElement("div");
   section.className = "debug-file";
 
@@ -74,7 +86,7 @@ function buildFileSection(fileId: string, hooks: DebugPanelHooks): HTMLElement {
 
   section.append(label, button, list);
   void refreshBackupList(fileId, list);
-  return section;
+  return { element: section, list };
 }
 
 async function handleCreateBackup(

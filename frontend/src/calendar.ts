@@ -63,6 +63,7 @@ let writeMode: StatusResponse["write_mode"] = "read-only";
 
 let dragActive = false;
 let dragCancelRequested = false;
+let refreshDebugPanel: () => void = () => {};
 
 document.addEventListener("keydown", (event: KeyboardEvent) => {
   if (event.key !== "Escape" || !dragActive) {
@@ -378,6 +379,7 @@ calendar.render();
 
 reloadButton.addEventListener("click", () => {
   calendar.refetchEvents();
+  refreshDebugPanel();
 });
 
 void getStatus()
@@ -388,7 +390,7 @@ void getStatus()
     renderFileFilter(status.files);
     statusLine.textContent = status.files.length === 0 ? "No configured files" : "Ready";
     if (debugEnabled) {
-      mountDebugPanel(appElement, status.files, {
+      refreshDebugPanel = mountDebugPanel(appElement, status.files, {
         onStatus: (message: string) => {
           statusLine.textContent = message;
         }

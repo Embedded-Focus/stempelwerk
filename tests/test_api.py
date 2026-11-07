@@ -300,8 +300,13 @@ def test_patch_clock_updates_line_preserves_unrelated_content_and_indentation(
         },
     )
 
-    assert patch_response.status_code == 204
-    assert patch_response.content == b""
+    assert patch_response.status_code == 200
+    body = patch_response.json()
+    assert body["start"] == "2026-07-31T09:30:00+02:00"
+    assert body["end"] == "2026-07-31T10:45:00+02:00"
+    assert body["duration_minutes"] == 75
+    assert body["id"] != implementation["id"]
+    assert body["revision"] != implementation["revision"]
 
     updated_text = org_file.read_text(encoding="utf-8")
     assert updated_text == (
@@ -319,6 +324,8 @@ def test_patch_clock_updates_line_preserves_unrelated_content_and_indentation(
     assert updated["start"] == "2026-07-31T09:30:00+02:00"
     assert updated["end"] == "2026-07-31T10:45:00+02:00"
     assert updated["duration_minutes"] == 75
+    assert updated["id"] == body["id"]
+    assert updated["revision"] == body["revision"]
     assert review["start"] == "2026-07-31T11:00:00+02:00"
     assert review["end"] == "2026-07-31T11:30:00+02:00"
 
@@ -734,3 +741,115 @@ def test_rename_heading_rejects_when_emacs_write_mode(tmp_path: Path, monkeypatc
 
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "emacs_not_supported"
+
+
+def test_patch_clock_ignores_seconds(tmp_path: Path, monkeypatch) -> None:
+    org_file = _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+    )
+    client = TestClient(create_app())
+    window = {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+    clock = client.get("/api/v1/clocks", params=window).json()["clocks"][0]
+
+    response = client.patch(
+        f"/api/v1/clocks/{clock['id']}",
+        json={
+            "start": "2026-07-31T09:30:45+02:00",
+            "end": "2026-07-31T10:45:59+02:00",
+            "expected_revision": clock["revision"],
+        },
+    )
+
+    assert response.status_code == 200
+    assert org_file.read_text(encoding="utf-8") == (
+        "* Work\nCLOCK: [2026-07-31 Fri 09:30]--[2026-07-31 Fri 10:45] =>  1:15\n"
+    )
+
+
+def test_patch_clock_rejects_range_shorter_than_a_minute(tmp_path: Path, monkeypatch) -> None:
+    org_file = _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+    )
+    client = TestClient(create_app())
+    window = {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+    clock = client.get("/api/v1/clocks", params=window).json()["clocks"][0]
+    before = org_file.read_bytes()
+
+    response = client.patch(
+        f"/api/v1/clocks/{clock['id']}",
+        json={
+            "start": "2026-07-31T09:00:10+02:00",
+            "end": "2026-07-31T09:00:50+02:00",
+            "expected_revision": clock["revision"],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "invalid_time_range"
+    assert org_file.read_bytes() == before
+
+
+def test_patch_clock_allows_overlapping_entries(tmp_path: Path, monkeypatch) -> None:
+    org_file = _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* First\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n"
+        "* Second\nCLOCK: [2026-07-31 Fri 11:00]--[2026-07-31 Fri 12:00] =>  1:00\n",
+    )
+    client = TestClient(create_app())
+    window = {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+    clocks = client.get("/api/v1/clocks", params=window).json()["clocks"]
+    second = next(c for c in clocks if c["heading_title"] == "Second")
+
+    response = client.patch(
+        f"/api/v1/clocks/{second['id']}",
+        json={
+            "start": "2026-07-31T09:30:00+02:00",
+            "end": "2026-07-31T10:30:00+02:00",
+            "expected_revision": second["revision"],
+        },
+    )
+
+    assert response.status_code == 200
+    after = client.get("/api/v1/clocks", params=window).json()["clocks"]
+    assert len(after) == 2
+    assert org_file.read_text(encoding="utf-8") == (
+        "* First\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n"
+        "* Second\nCLOCK: [2026-07-31 Fri 09:30]--[2026-07-31 Fri 10:30] =>  1:00\n"
+    )
+
+
+def test_patch_clock_then_rename_with_returned_revision(tmp_path: Path, monkeypatch) -> None:
+    _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+    )
+    client = TestClient(create_app())
+    window = {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+    clock = client.get("/api/v1/clocks", params=window).json()["clocks"][0]
+
+    update_response = client.patch(
+        f"/api/v1/clocks/{clock['id']}",
+        json={
+            "start": "2026-07-31T09:30:00+02:00",
+            "end": "2026-07-31T10:30:00+02:00",
+            "expected_revision": clock["revision"],
+        },
+    )
+    assert update_response.status_code == 200
+    updated = update_response.json()
+
+    heading_id = next(
+        h["id"] for h in client.get("/api/v1/headings").json() if h["outline"] == ["Work"]
+    )
+    rename_response = client.patch(
+        f"/api/v1/files/work/headings/{heading_id}",
+        json={"title": "Renamed", "expected_revision": updated["revision"]},
+    )
+
+    assert rename_response.status_code == 204

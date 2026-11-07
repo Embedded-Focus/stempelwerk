@@ -5,7 +5,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from stempelwerk.org_reader import HEADING_RE, OrgReader, UnknownOrgFileError, _split_tags
+from stempelwerk.domain import ClockEntry
+from stempelwerk.org_reader import (
+    HEADING_RE,
+    OrgReader,
+    UnknownOrgFileError,
+    _clock_id,
+    _split_tags,
+)
 from stempelwerk.revisions import revision_for_bytes
 
 _BACKUP_NAME_RE = re.compile(r"^.+\.bak\.(?P<timestamp>\d{8}T\d{12})$")
@@ -108,7 +115,7 @@ class OrgWriter:
         start: datetime,
         end: datetime,
         expected_revision: str,
-    ) -> None:
+    ) -> ClockEntry:
         file_config = reader.resolve_file(clock_id)
         if file_config is None:
             raise ClockNotFoundError(clock_id)
@@ -119,19 +126,26 @@ class OrgWriter:
         if parsed is None:
             raise ClockNotFoundError(clock_id)
 
-        local_start = start.astimezone(reader.timezone)
-        local_end = end.astimezone(reader.timezone)
+        local_start = start.astimezone(reader.timezone).replace(second=0, microsecond=0)
+        local_end = end.astimezone(reader.timezone).replace(second=0, microsecond=0)
         indent = parsed.line[: len(parsed.line) - len(parsed.line.lstrip())]
         replacement = (
             f"{indent}CLOCK: {format_clock_timestamp(local_start)}--{format_clock_timestamp(local_end)}"
             f" =>  {format_clock_duration(local_start, local_end)}"
         )
 
-        text = _read_at_revision(file_config.path, expected_revision)
         edit = TextEdit(start=parsed.line_start, end=parsed.line_end, replacement=replacement)
         updated_text = self.replace_clock_line(text, edit)
 
         _write_atomically(file_config.path, updated_text)
+
+        new_id = _clock_id(
+            parsed.entry.file_id, parsed.entry.heading_id, parsed.line_number, replacement
+        )
+        updated = reader.find_clock(new_id)
+        if updated is None:
+            raise RuntimeError(f"Updated clock {new_id} not found after write")
+        return updated.entry
 
     def create_backup(self, reader: OrgReader, file_id: str) -> Path:
         """Create a backup of the current contents of a configured Org file."""

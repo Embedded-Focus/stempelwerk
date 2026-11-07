@@ -71,14 +71,21 @@ def test_update_clock_preserves_indentation_and_replaces_only_target_line(tmp_pa
     }
     clocks, _ = reader.list_clocks(**window)
     development = next(c for c in clocks if c.heading_title == "Development")
+    old_revision = development.revision
 
-    OrgWriter().update_clock(
+    updated = OrgWriter().update_clock(
         reader,
         development.id,
         start=datetime(2026, 7, 31, 9, 30, tzinfo=ZoneInfo("Europe/Vienna")),
         end=datetime(2026, 7, 31, 10, 45, tzinfo=ZoneInfo("Europe/Vienna")),
         expected_revision=development.revision,
     )
+
+    assert updated.start == datetime(2026, 7, 31, 9, 30, tzinfo=ZoneInfo("Europe/Vienna"))
+    assert updated.end == datetime(2026, 7, 31, 10, 45, tzinfo=ZoneInfo("Europe/Vienna"))
+    assert updated.duration_minutes == 75
+    assert updated.id != development.id
+    assert updated.revision != old_revision
 
     assert org_file.read_text(encoding="utf-8") == (
         "* Acme\n"

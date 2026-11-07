@@ -9,6 +9,7 @@ from stempelwerk.domain import (
     BackupInfo,
     BackupsListResponse,
     ClockEntriesResponse,
+    ClockEntry,
     ClockUpdateRequest,
     Heading,
     HeadingRenameRequest,
@@ -122,9 +123,11 @@ def _ensure_writable(config: AppConfig, action: str) -> None:
         raise HTTPException(status_code=422, detail={"code": "emacs_not_supported"})
 
 
-@router.patch("/clocks/{clock_id}", status_code=204)
-def update_clock(clock_id: str, payload: ClockUpdateRequest) -> None:
-    if payload.end <= payload.start:
+@router.patch("/clocks/{clock_id}", response_model=ClockEntry)
+def update_clock(clock_id: str, payload: ClockUpdateRequest) -> ClockEntry:
+    start = payload.start.replace(second=0, microsecond=0)
+    end = payload.end.replace(second=0, microsecond=0)
+    if end <= start:
         logger.warning(
             "Rejected update of clock %s: end (%s) is not after start (%s)",
             clock_id,
@@ -139,11 +142,11 @@ def update_clock(clock_id: str, payload: ClockUpdateRequest) -> None:
     reader = OrgReader(config.files, config.timezone)
     writer = OrgWriter()
     try:
-        writer.update_clock(
+        updated = writer.update_clock(
             reader,
             clock_id,
-            start=payload.start,
-            end=payload.end,
+            start=start,
+            end=end,
             expected_revision=payload.expected_revision,
         )
     except ClockNotFoundError as error:
@@ -165,7 +168,8 @@ def update_clock(clock_id: str, payload: ClockUpdateRequest) -> None:
         logger.warning("Rejected update of clock %s: %s", clock_id, error)
         raise HTTPException(status_code=422, detail=str(error)) from error
 
-    logger.info("Updated clock %s", clock_id)
+    logger.info("Updated clock %s, new id %s", clock_id, updated.id)
+    return updated
 
 
 @router.patch("/files/{file_id}/headings/{heading_id}", status_code=204)

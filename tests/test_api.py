@@ -571,3 +571,166 @@ path = "{org_file}"
     response = client.post("/api/v1/files/work/backups")
 
     assert response.status_code == 201
+
+
+def _work_heading_id(client: TestClient, outline: list[str]) -> str:
+    headings = client.get("/api/v1/headings").json()
+    return next(h["id"] for h in headings if h["outline"] == outline)
+
+
+def _work_revision(client: TestClient, window: dict[str, str]) -> str:
+    return client.get("/api/v1/clocks", params=window).json()["revisions"]["work"]
+
+
+def test_rename_heading_updates_one_line_and_the_calendar(tmp_path: Path, monkeypatch) -> None:
+    org_file = _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Acme\n"
+        "** TODO Implementation :backend:\n"
+        "  CLOCK: [2026-07-31 Fri 09:15]--[2026-07-31 Fri 10:45] =>  1:30\n"
+        "** Review\n"
+        "CLOCK: [2026-07-31 Fri 11:00]--[2026-07-31 Fri 11:30] =>  0:30\n",
+    )
+    client = TestClient(create_app())
+    window = {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+    heading_id = _work_heading_id(client, ["Acme", "Implementation"])
+    revision = _work_revision(client, window)
+
+    response = client.patch(
+        f"/api/v1/files/work/headings/{heading_id}",
+        json={"title": "Coding", "expected_revision": revision},
+    )
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert org_file.read_text(encoding="utf-8") == (
+        "* Acme\n"
+        "** TODO Coding :backend:\n"
+        "  CLOCK: [2026-07-31 Fri 09:15]--[2026-07-31 Fri 10:45] =>  1:30\n"
+        "** Review\n"
+        "CLOCK: [2026-07-31 Fri 11:00]--[2026-07-31 Fri 11:30] =>  0:30\n"
+    )
+
+    clocks = client.get("/api/v1/clocks", params=window).json()["clocks"]
+    titles = {clock["heading_title"] for clock in clocks}
+    assert titles == {"Coding", "Review"}
+
+
+def test_rename_heading_rejects_stale_revision(tmp_path: Path, monkeypatch) -> None:
+    org_file = _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+    )
+    client = TestClient(create_app())
+    heading_id = _work_heading_id(client, ["Work"])
+    before = org_file.read_bytes()
+
+    response = client.patch(
+        f"/api/v1/files/work/headings/{heading_id}",
+        json={"title": "New", "expected_revision": "sha256:stale"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "revision_conflict"
+    assert org_file.read_bytes() == before
+
+
+def test_rename_heading_unknown_heading_id_returns_404(tmp_path: Path, monkeypatch) -> None:
+    _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+    )
+    client = TestClient(create_app())
+    revision = _work_revision(
+        client, {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+    )
+
+    response = client.patch(
+        "/api/v1/files/work/headings/heading:doesnotexist",
+        json={"title": "New", "expected_revision": revision},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "unknown_heading_id"
+
+
+def test_rename_heading_unknown_file_id_returns_404(tmp_path: Path, monkeypatch) -> None:
+    _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+    )
+    client = TestClient(create_app())
+    heading_id = _work_heading_id(client, ["Work"])
+
+    response = client.patch(
+        f"/api/v1/files/other/headings/{heading_id}",
+        json={"title": "New", "expected_revision": "sha256:stale"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "unknown_file_id"
+
+
+def test_rename_heading_empty_title_returns_422(tmp_path: Path, monkeypatch) -> None:
+    _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+    )
+    client = TestClient(create_app())
+    heading_id = _work_heading_id(client, ["Work"])
+    revision = _work_revision(
+        client, {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+    )
+
+    response = client.patch(
+        f"/api/v1/files/work/headings/{heading_id}",
+        json={"title": "   ", "expected_revision": revision},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "invalid_title"
+
+
+def test_rename_heading_rejects_when_read_only(tmp_path: Path, monkeypatch, caplog) -> None:
+    _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+        write_mode="read-only",
+    )
+    client = TestClient(create_app())
+    heading_id = _work_heading_id(client, ["Work"])
+
+    with caplog.at_level("WARNING", logger="stempelwerk.api.routes"):
+        response = client.patch(
+            f"/api/v1/files/work/headings/{heading_id}",
+            json={"title": "New", "expected_revision": "sha256:stale"},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "read_only"
+    assert any("read-only" in record.message for record in caplog.records)
+
+
+def test_rename_heading_rejects_when_emacs_write_mode(tmp_path: Path, monkeypatch) -> None:
+    _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+        write_mode="emacs",
+    )
+    client = TestClient(create_app())
+    heading_id = _work_heading_id(client, ["Work"])
+
+    response = client.patch(
+        f"/api/v1/files/work/headings/{heading_id}",
+        json={"title": "New", "expected_revision": "sha256:stale"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "emacs_not_supported"

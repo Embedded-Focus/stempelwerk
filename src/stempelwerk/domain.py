@@ -40,6 +40,11 @@ class ClockUpdateRequest(BaseModel):
     expected_revision: str
 
 
+class HeadingRenameRequest(BaseModel):
+    title: str
+    expected_revision: str
+
+
 class StatusResponse(BaseModel):
     status: Literal["ok"]
     emacs_available: bool

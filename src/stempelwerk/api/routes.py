@@ -11,11 +11,14 @@ from stempelwerk.domain import (
     ClockEntriesResponse,
     ClockUpdateRequest,
     Heading,
+    HeadingRenameRequest,
     StatusResponse,
 )
 from stempelwerk.org_reader import OrgReader, UnknownOrgFileError
 from stempelwerk.org_writer import (
     ClockNotFoundError,
+    HeadingNotFoundError,
+    InvalidHeadingTitleError,
     OrgWriter,
     RevisionConflictError,
     backup_created_at,
@@ -163,6 +166,70 @@ def update_clock(clock_id: str, payload: ClockUpdateRequest) -> None:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
     logger.info("Updated clock %s", clock_id)
+
+
+@router.patch("/files/{file_id}/headings/{heading_id}", status_code=204)
+def rename_heading(file_id: str, heading_id: str, payload: HeadingRenameRequest) -> None:
+    config = load_config()
+    _ensure_writable(config, f"rename of heading {heading_id} in {file_id}")
+
+    reader = OrgReader(config.files, config.timezone)
+    writer = OrgWriter()
+    try:
+        written = writer.rename_heading(
+            reader,
+            file_id,
+            heading_id,
+            title=payload.title,
+            expected_revision=payload.expected_revision,
+        )
+    except UnknownOrgFileError as error:
+        logger.warning(
+            "Rejected rename of heading %s in %s: unknown Org file id(s) %s",
+            heading_id,
+            file_id,
+            ", ".join(error.file_ids),
+        )
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "unknown_file_id", "files": error.file_ids},
+        ) from error
+    except HeadingNotFoundError as error:
+        logger.warning(
+            "Rejected rename of heading %s in %s: no heading with that id exists in the current file",
+            heading_id,
+            file_id,
+        )
+        raise HTTPException(status_code=404, detail={"code": "unknown_heading_id"}) from error
+    except RevisionConflictError as error:
+        logger.warning(
+            "Rejected rename of heading %s in %s: expected revision %s but file is now at %s "
+            "(the underlying Org file changed since it was loaded)",
+            heading_id,
+            file_id,
+            error.expected_revision,
+            error.actual_revision,
+        )
+        raise HTTPException(status_code=409, detail={"code": "revision_conflict"}) from error
+    except InvalidHeadingTitleError as error:
+        logger.warning(
+            "Rejected rename of heading %s in %s: invalid title %r (%s)",
+            heading_id,
+            file_id,
+            error.title,
+            error.reason,
+        )
+        raise HTTPException(
+            status_code=422, detail={"code": "invalid_title", "reason": error.reason}
+        ) from error
+    except FileNotFoundError as error:
+        logger.warning("Rejected rename of heading %s in %s: %s", heading_id, file_id, error)
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    if written:
+        logger.info("Renamed heading %s in %s", heading_id, file_id)
+    else:
+        logger.info("Heading %s in %s already has this title", heading_id, file_id)
 
 
 def _configured_file(config, file_id: str):

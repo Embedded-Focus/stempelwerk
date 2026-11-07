@@ -15,6 +15,7 @@ import {
   HeadingRenameError,
   getStatus,
   listClocks,
+  listHeadings,
   renameHeading,
   updateClock,
   type ClockEntry,
@@ -235,15 +236,58 @@ const handleEventOpen = (event: EventApi): void => {
 
   openEntryDialog({
     fileId,
+    headingId,
     outline: outline.filter((part): part is string => typeof part === "string"),
     title: event.title,
     start: event.start,
     end: event.end,
     timesEditable: editable !== false,
-    onSave: async ({ title, start, end }: EntryDialogValues) => {
+    loadHeadings: listHeadings,
+    onSave: async ({ title, headingId: targetHeadingId, start, end }: EntryDialogValues) => {
       const timesChanged =
         start.getTime() !== savedStart.getTime() || end.getTime() !== savedEnd.getTime();
-      const titleChanged = title.trim() !== savedTitle;
+
+      if (targetHeadingId !== null && targetHeadingId !== headingId) {
+        try {
+          await updateClock({
+            id: clockId,
+            start: start.toISOString(),
+            end: end.toISOString(),
+            expectedRevision: revisionState,
+            headingId: targetHeadingId
+          });
+          statusLine.textContent = "Entry moved";
+          calendar.refetchEvents();
+        } catch (error: unknown) {
+          if (error instanceof ClockUpdateError && error.status === 409) {
+            statusLine.textContent = "Org file changed on disk - reloading calendar";
+            calendar.refetchEvents();
+            return;
+          }
+          if (error instanceof ClockUpdateError && error.status === 404) {
+            if (error.code === "unknown_heading_id") {
+              throw new Error(
+                "The selected heading no longer exists. Close the dialog and try again."
+              );
+            }
+            statusLine.textContent = "This entry no longer exists - reloading calendar";
+            calendar.refetchEvents();
+            return;
+          }
+          if (
+            error instanceof ClockUpdateError &&
+            error.status === 422 &&
+            error.code === "invalid_time_range"
+          ) {
+            throw new Error("End must be at least one minute after start.");
+          }
+          console.error(error);
+          throw new Error("Could not move the entry");
+        }
+        return;
+      }
+
+      const titleChanged = title !== null && title.trim() !== savedTitle;
       if (!timesChanged && !titleChanged) {
         return;
       }

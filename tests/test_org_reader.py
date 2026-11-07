@@ -3,8 +3,10 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from stempelwerk.config import OrgFileConfig
-from stempelwerk.org_reader import OrgReader
+from stempelwerk.org_reader import OrgReader, UnknownOrgFileError
 from stempelwerk.revisions import revision_for_file
 
 
@@ -142,3 +144,49 @@ def test_find_clock_returns_none_for_unknown_or_malformed_id(tmp_path: Path) -> 
     assert reader.find_clock("clock:work:doesnotexist") is None
     assert reader.find_clock("clock:unknown-file:abc123") is None
     assert reader.find_clock("not-a-clock-id") is None
+
+
+def test_find_heading_returns_offsets_and_preserves_title_span(tmp_path: Path) -> None:
+    org_file = tmp_path / "work.org"
+    text = (
+        "* Client Work :billable:\n"
+        "** TODO Implementation :backend:\n"
+        "CLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n"
+        "*** Sub Task\n"
+    )
+    org_file.write_text(text, encoding="utf-8")
+    reader = OrgReader([OrgFileConfig(id="work", path=org_file)], timezone="Europe/Vienna")
+    heading_id = _heading_id_for_outline(reader, ["Client Work", "Implementation"], "work")
+
+    parsed = reader.find_heading("work", heading_id)
+
+    assert parsed is not None
+    assert parsed.title == "Implementation"
+    assert parsed.todo == "TODO"
+    assert parsed.tags == ["backend"]
+    assert text[parsed.title_start : parsed.title_end] == "Implementation"
+    assert text[parsed.line_start : parsed.line_end] == parsed.line
+    assert parsed.line == "** TODO Implementation :backend:"
+
+
+def test_find_heading_returns_none_for_unknown_id(tmp_path: Path) -> None:
+    org_file = tmp_path / "work.org"
+    org_file.write_text("* Development\n", encoding="utf-8")
+    reader = OrgReader([OrgFileConfig(id="work", path=org_file)], timezone="Europe/Vienna")
+
+    assert reader.find_heading("work", "heading:doesnotexist") is None
+
+
+def test_find_heading_raises_for_unknown_file_id(tmp_path: Path) -> None:
+    org_file = tmp_path / "work.org"
+    org_file.write_text("* Development\n", encoding="utf-8")
+    reader = OrgReader([OrgFileConfig(id="work", path=org_file)], timezone="Europe/Vienna")
+
+    with pytest.raises(UnknownOrgFileError):
+        reader.find_heading("other", "heading:whatever")
+
+
+def _heading_id_for_outline(reader: OrgReader, outline: list[str], file_id: str) -> str:
+    heading = next(h for h in reader.list_headings() if h.outline == outline)
+    assert heading.file_id == file_id
+    return heading.id

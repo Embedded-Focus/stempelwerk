@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from stempelwerk.org_reader import OrgReader, UnknownOrgFileError
+from stempelwerk.org_reader import HEADING_RE, OrgReader, UnknownOrgFileError, _split_tags
 from stempelwerk.revisions import revision_for_bytes
 
 _BACKUP_NAME_RE = re.compile(r"^.+\.bak\.(?P<timestamp>\d{8}T\d{12})$")
@@ -24,6 +24,19 @@ class ClockNotFoundError(LookupError):
     def __init__(self, clock_id: str) -> None:
         self.clock_id = clock_id
         super().__init__(f"Unknown clock id: {clock_id}")
+
+
+class HeadingNotFoundError(LookupError):
+    def __init__(self, heading_id: str) -> None:
+        self.heading_id = heading_id
+        super().__init__(f"Unknown heading id: {heading_id}")
+
+
+class InvalidHeadingTitleError(ValueError):
+    def __init__(self, title: str, reason: str) -> None:
+        self.title = title
+        self.reason = reason
+        super().__init__(f"Invalid heading title {title!r}: {reason}")
 
 
 class RevisionConflictError(ValueError):
@@ -128,6 +141,52 @@ class OrgWriter:
             raise UnknownOrgFileError([file_id])
         raw = file_config.path.read_bytes()
         return _create_backup(file_config.path, raw)
+
+    def rename_heading(
+        self,
+        reader: OrgReader,
+        file_id: str,
+        heading_id: str,
+        title: str,
+        expected_revision: str,
+    ) -> bool:
+        """Rename one heading. Return True if the file was written."""
+
+        file_config = reader.file_by_id(file_id)
+        if file_config is None:
+            raise UnknownOrgFileError([file_id])
+
+        text = _read_at_revision(file_config.path, expected_revision)
+
+        parsed = reader.find_heading(file_id, heading_id)
+        if parsed is None:
+            raise HeadingNotFoundError(heading_id)
+
+        new_title = title.strip()
+        if not new_title:
+            raise InvalidHeadingTitleError(title, "empty")
+        if "\n" in new_title or "\r" in new_title:
+            raise InvalidHeadingTitleError(title, "line break")
+
+        relative_start = parsed.title_start - parsed.line_start
+        relative_end = parsed.title_end - parsed.line_start
+        new_line = parsed.line[:relative_start] + new_title + parsed.line[relative_end:]
+        match = HEADING_RE.match(new_line)
+        if (
+            match is None
+            or match.group("title").strip() != new_title
+            or match.group("todo") != parsed.todo
+            or _split_tags(match.group("tags")) != parsed.tags
+        ):
+            raise InvalidHeadingTitleError(title, "not preserved")
+
+        if new_title == parsed.title:
+            return False
+
+        edit = TextEdit(start=parsed.title_start, end=parsed.title_end, replacement=new_title)
+        updated_text = self.replace_clock_line(text, edit)
+        _write_atomically(file_config.path, updated_text)
+        return True
 
 
 def _create_backup(path: Path, raw: bytes) -> Path:

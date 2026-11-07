@@ -8,13 +8,17 @@ import pytest
 from stempelwerk.config import OrgFileConfig
 from stempelwerk.org_reader import OrgReader, UnknownOrgFileError
 from stempelwerk.org_writer import (
+    HeadingNotFoundError,
+    InvalidHeadingTitleError,
     OrgWriter,
+    RevisionConflictError,
     TextEdit,
     backup_created_at,
     format_clock_duration,
     format_clock_timestamp,
     list_backups,
 )
+from stempelwerk.revisions import revision_for_file
 
 
 def test_replace_clock_line_preserves_surrounding_text() -> None:
@@ -163,3 +167,241 @@ def test_backup_created_at_rejects_invalid_names() -> None:
     assert backup_created_at("work.org.bak.20260101T120000000000") == datetime(
         2026, 1, 1, 12, 0, 0, tzinfo=UTC
     )
+
+
+def test_rename_heading_changes_only_the_title_text(tmp_path: Path) -> None:
+    reader, org_file = _reader(
+        tmp_path,
+        "* Acme\n"
+        "** TODO Implementation :backend:\n"
+        "  CLOCK: [2026-07-31 Fri 09:15]--[2026-07-31 Fri 11:30] =>  2:15\n"
+        "** Support\n"
+        "CLOCK: [2026-07-31 Fri 13:00]--[2026-07-31 Fri 13:45] =>  0:45\n",
+    )
+    heading_id = _heading_id_by_outline(reader, ["Acme", "Implementation"])
+
+    written = OrgWriter().rename_heading(
+        reader,
+        "work",
+        heading_id,
+        title="Coding",
+        expected_revision=revision_for_file(org_file),
+    )
+
+    assert written is True
+    assert org_file.read_text(encoding="utf-8") == (
+        "* Acme\n"
+        "** TODO Coding :backend:\n"
+        "  CLOCK: [2026-07-31 Fri 09:15]--[2026-07-31 Fri 11:30] =>  2:15\n"
+        "** Support\n"
+        "CLOCK: [2026-07-31 Fri 13:00]--[2026-07-31 Fri 13:45] =>  0:45\n"
+    )
+
+
+def test_rename_heading_keeps_whitespace_between_title_and_tags(tmp_path: Path) -> None:
+    reader, org_file = _reader(
+        tmp_path,
+        "* Client Work      :billable:x:\n",
+    )
+    heading_id = _heading_id_by_outline(reader, ["Client Work"])
+
+    OrgWriter().rename_heading(
+        reader,
+        "work",
+        heading_id,
+        title="Customer Work",
+        expected_revision=revision_for_file(org_file),
+    )
+
+    assert org_file.read_text(encoding="utf-8") == "* Customer Work      :billable:x:\n"
+
+
+def test_rename_heading_treats_priority_cookie_as_title(tmp_path: Path) -> None:
+    reader, org_file = _reader(tmp_path, "*** [#A] Fix bug\n")
+    heading_id = _heading_id_by_outline(reader, ["[#A] Fix bug"])
+
+    OrgWriter().rename_heading(
+        reader,
+        "work",
+        heading_id,
+        title="[#B] Fix bug",
+        expected_revision=revision_for_file(org_file),
+    )
+
+    assert org_file.read_text(encoding="utf-8") == "*** [#B] Fix bug\n"
+
+
+def test_rename_heading_changes_only_the_target_among_equal_titles(
+    tmp_path: Path,
+) -> None:
+    reader, org_file = _reader(tmp_path, "* Notes\n* Notes\n")
+    headings = reader.list_headings()
+    first_id = headings[0].id
+    second_id = headings[1].id
+
+    OrgWriter().rename_heading(
+        reader,
+        "work",
+        first_id,
+        title="Journal",
+        expected_revision=revision_for_file(org_file),
+    )
+
+    assert org_file.read_text(encoding="utf-8") == "* Journal\n* Notes\n"
+    assert reader.find_heading("work", second_id) is not None
+    assert reader.find_heading("work", first_id) is None
+
+
+def test_rename_heading_updates_titles_seen_by_clocks_and_children(
+    tmp_path: Path,
+) -> None:
+    reader, org_file = _reader(
+        tmp_path,
+        "* Acme\n"
+        "** Development\n"
+        "CLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n"
+        "*** Coding\n"
+        "CLOCK: [2026-07-31 Fri 11:00]--[2026-07-31 Fri 12:00] =>  1:00\n",
+    )
+    heading_id = _heading_id_by_outline(reader, ["Acme", "Development"])
+    window: dict[str, Any] = {
+        "start": datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        "end": datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+    }
+
+    OrgWriter().rename_heading(
+        reader,
+        "work",
+        heading_id,
+        title="Engineering",
+        expected_revision=revision_for_file(org_file),
+    )
+
+    clocks, _ = reader.list_clocks(**window)
+    by_title = {clock.heading_title for clock in clocks}
+    assert by_title == {"Engineering", "Coding"}
+    outlines = {tuple(clock.outline) for clock in clocks}
+    assert ("Acme", "Engineering", "Coding") in outlines
+
+
+def test_rename_heading_strips_surrounding_whitespace(tmp_path: Path) -> None:
+    reader, org_file = _reader(tmp_path, "* Work\n")
+    heading_id = _heading_id_by_outline(reader, ["Work"])
+
+    OrgWriter().rename_heading(
+        reader,
+        "work",
+        heading_id,
+        title="  Paid Work  ",
+        expected_revision=revision_for_file(org_file),
+    )
+
+    assert org_file.read_text(encoding="utf-8") == "* Paid Work\n"
+
+
+def test_rename_heading_same_title_is_a_no_op(tmp_path: Path) -> None:
+    reader, org_file = _reader(tmp_path, "* Work\n")
+    heading_id = _heading_id_by_outline(reader, ["Work"])
+    before = org_file.read_bytes()
+
+    written = OrgWriter().rename_heading(
+        reader,
+        "work",
+        heading_id,
+        title="Work",
+        expected_revision=revision_for_file(org_file),
+    )
+
+    assert written is False
+    assert org_file.read_bytes() == before
+
+
+def test_rename_heading_rejects_stale_revision(tmp_path: Path) -> None:
+    reader, org_file = _reader(tmp_path, "* Work\n")
+    heading_id = _heading_id_by_outline(reader, ["Work"])
+    before = org_file.read_bytes()
+
+    with pytest.raises(RevisionConflictError):
+        OrgWriter().rename_heading(
+            reader,
+            "work",
+            heading_id,
+            title="New",
+            expected_revision="sha256:stale",
+        )
+
+    assert org_file.read_bytes() == before
+
+
+def test_rename_heading_unknown_heading_id_raises(tmp_path: Path) -> None:
+    reader, org_file = _reader(tmp_path, "* Work\n")
+
+    with pytest.raises(HeadingNotFoundError):
+        OrgWriter().rename_heading(
+            reader,
+            "work",
+            "heading:doesnotexist",
+            title="New",
+            expected_revision=revision_for_file(org_file),
+        )
+
+
+def test_rename_heading_unknown_file_id_raises(tmp_path: Path) -> None:
+    reader, _org_file = _reader(tmp_path, "* Work\n")
+
+    with pytest.raises(UnknownOrgFileError):
+        OrgWriter().rename_heading(
+            reader,
+            "other",
+            "heading:whatever",
+            title="New",
+            expected_revision="sha256:stale",
+        )
+
+
+@pytest.mark.parametrize(
+    ("title", "org_text"),
+    [
+        ("", "* Work\n"),
+        ("   ", "* Work\n"),
+        ("a\nb", "* Work\n"),
+        ("WIP changes", "* Work\n"),
+        ("Done :tag:", "* Work\n"),
+    ],
+)
+def test_rename_heading_rejects_invalid_titles_and_keeps_file(
+    tmp_path: Path, title: str, org_text: str
+) -> None:
+    reader, org_file = _reader(tmp_path, org_text)
+    heading_id = _heading_id_by_outline(reader, [org_text.removeprefix("*").strip()])
+    before = org_file.read_bytes()
+
+    with pytest.raises(InvalidHeadingTitleError):
+        OrgWriter().rename_heading(
+            reader,
+            "work",
+            heading_id,
+            title=title,
+            expected_revision=revision_for_file(org_file),
+        )
+
+    assert org_file.read_bytes() == before
+
+
+def test_rename_heading_creates_no_backup(tmp_path: Path) -> None:
+    reader, org_file = _reader(tmp_path, "* Work\n")
+    heading_id = _heading_id_by_outline(reader, ["Work"])
+
+    OrgWriter().rename_heading(
+        reader,
+        "work",
+        heading_id,
+        title="New",
+        expected_revision=revision_for_file(org_file),
+    )
+
+    assert list(tmp_path.glob("work.org.bak.*")) == []
+
+
+def _heading_id_by_outline(reader: OrgReader, outline: list[str]) -> str:
+    return next(heading.id for heading in reader.list_headings() if heading.outline == outline)

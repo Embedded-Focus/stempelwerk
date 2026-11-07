@@ -65,7 +65,7 @@ class OrgReader:
     def list_headings(self) -> list[Heading]:
         headings: list[Heading] = []
         for file_config in self._files:
-            headings.extend(self._read_file(file_config)[0])
+            headings.extend(heading.to_domain() for heading in self._read_file(file_config)[0])
         return headings
 
     def list_clocks(
@@ -97,6 +97,18 @@ class OrgReader:
         _, parsed_clocks, _ = self._read_file(file_config)
         return next((parsed for parsed in parsed_clocks if parsed.entry.id == clock_id), None)
 
+    def find_heading(self, file_id: str, heading_id: str) -> "ParsedHeading | None":
+        """Re-read the file and return the heading with this ID, or None.
+
+        Raise UnknownOrgFileError([file_id]) if the file ID is not configured.
+        """
+        file_config = self.file_by_id(file_id)
+        if file_config is None:
+            raise UnknownOrgFileError([file_id])
+
+        parsed_headings, _, _ = self._read_file(file_config)
+        return next((heading for heading in parsed_headings if heading.id == heading_id), None)
+
     def _selected_files(self, file_ids: list[str] | None) -> list[OrgFileConfig]:
         if not file_ids:
             return self._files
@@ -110,12 +122,12 @@ class OrgReader:
 
     def _read_file(
         self, file_config: OrgFileConfig
-    ) -> tuple[list[Heading], list[ParsedClock], str]:
+    ) -> tuple[list["ParsedHeading"], list[ParsedClock], str]:
         raw = file_config.path.read_bytes()
         text = raw.decode("utf-8")
         revision = revision_for_bytes(raw)
         heading_stack: list[ParsedHeading] = []
-        headings: list[Heading] = []
+        headings: list[ParsedHeading] = []
         clocks: list[ParsedClock] = []
 
         offset = 0
@@ -140,9 +152,14 @@ class OrgReader:
                     tags=tags,
                     todo=heading_match.group("todo"),
                     stable=False,
+                    line=line,
+                    line_start=line_start,
+                    line_end=line_end,
+                    title_start=line_start + heading_match.start("title"),
+                    title_end=line_start + heading_match.end("title"),
                 )
                 heading_stack.append(heading)
-                headings.append(heading.to_domain())
+                headings.append(heading)
                 continue
 
             clock_match = CLOCK_RE.match(line)
@@ -209,6 +226,11 @@ class ParsedHeading:
         tags: list[str],
         todo: str | None,
         stable: bool,
+        line: str,
+        line_start: int,
+        line_end: int,
+        title_start: int,
+        title_end: int,
     ) -> None:
         self.id = id
         self.file_id = file_id
@@ -217,6 +239,11 @@ class ParsedHeading:
         self.tags = tags
         self.todo = todo
         self.stable = stable
+        self.line = line
+        self.line_start = line_start
+        self.line_end = line_end
+        self.title_start = title_start
+        self.title_end = title_end
 
     def to_domain(self) -> Heading:
         return Heading(

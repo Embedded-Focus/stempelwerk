@@ -54,12 +54,23 @@ export async function listClocks(params: {
   return response.json() as Promise<ClockEntriesResponse>;
 }
 
+async function readErrorCode(response: Response): Promise<string | null> {
+  try {
+    const body = (await response.json()) as { detail?: { code?: unknown } };
+    return typeof body.detail?.code === "string" ? body.detail.code : null;
+  } catch {
+    return null;
+  }
+}
+
 export class ClockUpdateError extends Error {
   status: number;
+  code: string | null;
 
-  constructor(status: number) {
+  constructor(status: number, code: string | null) {
     super(`Clock update failed: ${status}`);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -104,7 +115,7 @@ export async function updateClock(params: {
   start: string;
   end: string;
   expectedRevision: string;
-}): Promise<void> {
+}): Promise<ClockEntry> {
   const response = await fetch(`/api/v1/clocks/${encodeURIComponent(params.id)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -116,8 +127,9 @@ export async function updateClock(params: {
   });
 
   if (!response.ok) {
-    throw new ClockUpdateError(response.status);
+    throw new ClockUpdateError(response.status, await readErrorCode(response));
   }
+  return response.json() as Promise<ClockEntry>;
 }
 
 export class HeadingRenameError extends Error {
@@ -152,13 +164,6 @@ export async function renameHeading(params: {
   );
 
   if (!response.ok) {
-    let code: string | null = null;
-    try {
-      const body = (await response.json()) as { detail?: { code?: string } };
-      code = body.detail?.code ?? null;
-    } catch {
-      code = null;
-    }
-    throw new HeadingRenameError(response.status, code);
+    throw new HeadingRenameError(response.status, await readErrorCode(response));
   }
 }

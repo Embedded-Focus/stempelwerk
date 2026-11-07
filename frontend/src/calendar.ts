@@ -17,6 +17,7 @@ import {
   listClocks,
   renameHeading,
   updateClock,
+  type ClockEntry,
   type StatusResponse
 } from "./api";
 import {
@@ -157,7 +158,8 @@ const calendar = new Calendar(calendarElement, {
           fileId: clock.file_id,
           headingId: clock.heading_id,
           outline: clock.outline,
-          revision: clock.revision
+          revision: clock.revision,
+          editable: clock.editable
         }
       }));
     } catch (error: unknown) {
@@ -200,55 +202,130 @@ const calendar = new Calendar(calendarElement, {
 
 const handleEventOpen = (event: EventApi): void => {
   if (writeMode === "read-only" || writeMode === "emacs") {
-    statusLine.textContent = "Renaming is not available in this write mode";
+    statusLine.textContent = "Editing is not available in this write mode";
     return;
   }
 
-  const { fileId, headingId, outline, revision } = event.extendedProps as {
+  const { fileId, headingId, outline, revision, editable } = event.extendedProps as {
     fileId?: unknown;
     headingId?: unknown;
     outline?: unknown;
     revision?: unknown;
+    editable?: unknown;
   };
 
   if (
+    event.start === null ||
+    event.end === null ||
     typeof fileId !== "string" ||
     typeof headingId !== "string" ||
     !Array.isArray(outline) ||
     typeof revision !== "string"
   ) {
-    statusLine.textContent = "Could not rename heading";
+    statusLine.textContent = "Could not open the entry";
     return;
   }
+
+  const initialRevision = revision;
+  let clockId = event.id;
+  let revisionState = initialRevision;
+  let savedStart = event.start;
+  let savedEnd = event.end;
+  const savedTitle = event.title;
 
   openEntryDialog({
     fileId,
     outline: outline.filter((part): part is string => typeof part === "string"),
     title: event.title,
-    onSave: async ({ title }: EntryDialogValues) => {
-      try {
-        await renameHeading({
-          fileId,
-          headingId,
-          title,
-          expectedRevision: revision
-        });
-        statusLine.textContent = "Heading renamed";
-        calendar.refetchEvents();
-      } catch (error: unknown) {
-        if (error instanceof HeadingRenameError && error.status === 409) {
-          statusLine.textContent = "Org file changed on disk - reloading calendar";
-          calendar.refetchEvents();
-          return;
-        }
-        if (error instanceof HeadingRenameError && error.status === 422 && error.code === "invalid_title") {
-          throw new Error(
-            "This title cannot be stored as written. Check for line breaks, a leading uppercase word, or a trailing :tag:."
-          );
-        }
-        console.error(error);
-        throw new Error("Could not rename heading");
+    start: event.start,
+    end: event.end,
+    timesEditable: editable !== false,
+    onSave: async ({ title, start, end }: EntryDialogValues) => {
+      const timesChanged =
+        start.getTime() !== savedStart.getTime() || end.getTime() !== savedEnd.getTime();
+      const titleChanged = title.trim() !== savedTitle;
+      if (!timesChanged && !titleChanged) {
+        return;
       }
+
+      let timesSaved = false;
+      if (timesChanged) {
+        try {
+          const updated: ClockEntry = await updateClock({
+            id: clockId,
+            start: start.toISOString(),
+            end: end.toISOString(),
+            expectedRevision: revisionState
+          });
+          clockId = updated.id;
+          revisionState = updated.revision;
+          savedStart = start;
+          savedEnd = end;
+          timesSaved = true;
+        } catch (error: unknown) {
+          if (error instanceof ClockUpdateError && error.status === 409) {
+            statusLine.textContent = "Org file changed on disk - reloading calendar";
+            calendar.refetchEvents();
+            return;
+          }
+          if (error instanceof ClockUpdateError && error.status === 404) {
+            statusLine.textContent = "This entry no longer exists - reloading calendar";
+            calendar.refetchEvents();
+            return;
+          }
+          if (
+            error instanceof ClockUpdateError &&
+            error.status === 422 &&
+            error.code === "invalid_time_range"
+          ) {
+            throw new Error("End must be at least one minute after start.");
+          }
+          console.error(error);
+          throw new Error("Could not save the times");
+        }
+      }
+
+      if (titleChanged) {
+        try {
+          await renameHeading({
+            fileId,
+            headingId,
+            title: title.trim(),
+            expectedRevision: revisionState
+          });
+        } catch (error: unknown) {
+          if (error instanceof HeadingRenameError && error.status === 409) {
+            statusLine.textContent = timesSaved
+              ? "Times saved, but the Org file changed on disk - reloading calendar"
+              : "Org file changed on disk - reloading calendar";
+            calendar.refetchEvents();
+            return;
+          }
+          let message = "Could not rename heading";
+          if (
+            error instanceof HeadingRenameError &&
+            error.status === 422 &&
+            error.code === "invalid_title"
+          ) {
+            message =
+              "This title cannot be stored as written. Check for line breaks, a leading uppercase word, or a trailing :tag:.";
+          } else if (!(error instanceof HeadingRenameError)) {
+            console.error(error);
+          }
+          if (timesSaved) {
+            statusLine.textContent = `Times saved. ${message}`;
+            calendar.refetchEvents();
+          }
+          throw new Error(message);
+        }
+      }
+
+      statusLine.textContent = timesChanged && titleChanged
+        ? "Entry updated"
+        : timesChanged
+          ? "Times updated"
+          : "Heading renamed";
+      calendar.refetchEvents();
     }
   });
 }

@@ -196,6 +196,21 @@ body {
   font: inherit;
 }
 
+.clock-dialog-times {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.clock-dialog-times .clock-dialog-label {
+  flex: 1;
+}
+
+.clock-dialog-duration {
+  margin: 8px 0 0;
+  font-size: 0.85rem;
+}
+
 .clock-dialog-note {
   margin: 8px 0 0;
   color: color-mix(in srgb, CanvasText 70%, transparent);

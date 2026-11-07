@@ -28,7 +28,8 @@ The backend uses `demo/config.toml`, which points at the sample files in
 
 The demo enables the debug panel (`VITE_DEBUG_PANEL=1`), which offers a
 "Create backup" button per configured file. Backups are no longer created
-automatically on clock updates; you create them from this panel.
+automatically on clock updates; you create them from this panel. The panel
+starts collapsed; click "Debug" to expand it.
 
 Follow service logs with:
 

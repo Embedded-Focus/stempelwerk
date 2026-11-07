@@ -15,12 +15,12 @@ export function mountDebugPanel(
   }
 
   const panel = document.createElement("section");
-  panel.className = "debug-panel";
+  panel.className = "debug-panel debug-collapsed";
 
   const toggle = document.createElement("button");
   toggle.type = "button";
   toggle.className = "debug-toggle";
-  toggle.setAttribute("aria-expanded", "true");
+  toggle.setAttribute("aria-expanded", "false");
 
   const arrow = document.createElement("span");
   arrow.className = "debug-toggle-arrow";

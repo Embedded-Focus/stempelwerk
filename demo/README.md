@@ -1,6 +1,8 @@
 # Demo Environment
 
-This directory contains a Docker Compose setup for local browser testing.
+This directory contains a Compose setup for local browser testing. It works
+with Docker (`docker compose`) and Podman (`podman compose`); pass the engine
+via `CONTAINER_ENGINE` if you do not use the Docker default.
 
 ```bash
 make demo-up

@@ -2,6 +2,7 @@ PYTHON ?= uv run
 NPM ?= npm
 BACKEND_HOST ?= 127.0.0.1
 BACKEND_PORT ?= 8765
+CONTAINER_ENGINE ?= docker
 
 .PHONY: help install install-python install-frontend install-hooks dev-api dev-frontend demo-up demo-down demo-logs pre-commit audit test lint check-format build-frontend clean
 
@@ -25,14 +26,14 @@ dev-api: ## Start the FastAPI development server
 dev-frontend: ## Start the Vite frontend development server
 	$(NPM) --prefix frontend run dev
 
-demo-up: ## Start the Docker Compose demo environment
-	docker compose -f demo/compose.yaml up --build -d
+demo-up: ## Start the container demo environment (CONTAINER_ENGINE=docker|podman)
+	$(CONTAINER_ENGINE) compose -f demo/compose.yaml up --build -d
 
-demo-down: ## Stop the Docker Compose demo environment
-	docker compose -f demo/compose.yaml down
+demo-down: ## Stop the container demo environment
+	$(CONTAINER_ENGINE) compose -f demo/compose.yaml down
 
-demo-logs: ## Follow Docker Compose demo logs
-	docker compose -f demo/compose.yaml logs -f
+demo-logs: ## Follow container demo logs
+	$(CONTAINER_ENGINE) compose -f demo/compose.yaml logs -f
 
 pre-commit: ## Run pre-commit hooks on all tracked files
 	$(PYTHON) pre-commit run --all-files

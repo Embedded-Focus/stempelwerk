@@ -15,7 +15,7 @@
 
 **[Architecture](#architecture)** ·
 **[Development](#development)** ·
-**[Docker Demo](#docker-demo)**
+**[Demo](#demo)**
 
 </div>
 
@@ -99,7 +99,7 @@ The browser only receives configured file IDs. Calendar filtering uses repeated
 `file_id` query parameters, for example
 `/api/v1/clocks?...&file_id=work&file_id=customers`.
 
-## Docker Demo
+## Demo
 
 ```bash
 make demo-up
@@ -109,3 +109,10 @@ Then open `http://127.0.0.1:5173`.
 
 Use `make demo-logs` to follow service output and `make demo-down` to stop the
 environment.
+
+The Compose demo defaults to Docker. To use Podman instead (requires the
+`podman compose` plugin, e.g. `podman-compose` or `docker-compose`), run:
+
+```bash
+make demo-up CONTAINER_ENGINE=podman
+```

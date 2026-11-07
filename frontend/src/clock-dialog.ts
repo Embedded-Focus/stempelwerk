@@ -183,6 +183,7 @@ export function openEntryDialog(options: EntryDialogOptions): void {
 
   const setMode = (next: "none" | "rename" | "reassign"): void => {
     mode = next;
+    dialog.classList.toggle("clock-dialog-wide", mode === "reassign");
     renamePanel.hidden = mode !== "rename";
     reassignPanel.hidden = mode !== "reassign";
     renameButton.setAttribute("aria-pressed", mode === "rename" ? "true" : "false");

@@ -169,6 +169,11 @@ body {
   max-width: 480px;
 }
 
+.clock-dialog.clock-dialog-wide {
+  width: min(800px, 90vw);
+  max-width: min(800px, 90vw);
+}
+
 .clock-dialog-heading {
   margin: 0 0 8px;
   font-size: 1rem;
@@ -275,7 +280,7 @@ body {
 .heading-tree ul {
   list-style: none;
   margin: 0;
-  padding-left: 16px;
+  padding-left: 12px;
 }
 
 .heading-tree summary {

@@ -355,9 +355,45 @@ body {
 .stats-panel {
   max-width: 1280px;
   margin: 16px auto 0;
-  padding: 12px 16px;
+  padding: 8px 16px;
   border: 1px solid color-mix(in srgb, CanvasText 15%, transparent);
   border-radius: 8px;
+}
+
+.stats-panel.stats-collapsed .stats-tiles,
+.stats-panel.stats-collapsed .stats-body,
+.stats-panel.stats-collapsed .stats-note,
+.stats-panel.stats-collapsed .stats-empty {
+  display: none;
+}
+
+.stats-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 8px;
+  margin: 4px 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.stats-toggle:hover {
+  background: color-mix(in srgb, CanvasText 8%, transparent);
+}
+
+.stats-toggle-arrow {
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+
+.stats-collapsed .stats-toggle-arrow {
+  transform: rotate(-90deg);
 }
 
 .stats-header {
@@ -366,6 +402,10 @@ body {
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.stats-collapsed .stats-header {
+  justify-content: flex-start;
 }
 
 .stats-heading {

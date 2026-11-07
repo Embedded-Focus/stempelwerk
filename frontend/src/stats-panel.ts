@@ -30,8 +30,24 @@ export function createStatsPanel(options: StatsPanelOptions): StatsPanel {
   const groupBy = readGroupBy();
 
   const element = document.createElement("section");
-  element.className = "stats-panel";
+  element.className = "stats-panel stats-collapsed";
   element.setAttribute("aria-label", "Statistics");
+
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "stats-toggle";
+  toggle.setAttribute("aria-expanded", "false");
+  const toggleArrow = document.createElement("span");
+  toggleArrow.className = "stats-toggle-arrow";
+  toggleArrow.textContent = "▾";
+  toggleArrow.setAttribute("aria-hidden", "true");
+  const toggleText = document.createElement("span");
+  toggleText.textContent = "Summary";
+  toggle.append(toggleArrow, toggleText);
+  toggle.addEventListener("click", () => {
+    const collapsed = element.classList.toggle("stats-collapsed");
+    toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  });
 
   const header = document.createElement("header");
   header.className = "stats-header";
@@ -61,7 +77,7 @@ export function createStatsPanel(options: StatsPanelOptions): StatsPanel {
     render();
   });
   groupLabel.append(groupText, groupSelect);
-  header.append(heading, groupLabel);
+  header.append(toggle, heading, groupLabel);
 
   const tiles = document.createElement("div");
   tiles.className = "stats-tiles";

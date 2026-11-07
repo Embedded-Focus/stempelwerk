@@ -164,3 +164,77 @@ body {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.85rem;
 }
+
+.clock-dialog {
+  border: 1px solid color-mix(in srgb, CanvasText 25%, transparent);
+  border-radius: 8px;
+  padding: 16px;
+  min-width: 320px;
+  max-width: 480px;
+}
+
+.clock-dialog-heading {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.clock-dialog-source {
+  margin: 0 0 12px;
+  color: color-mix(in srgb, CanvasText 70%, transparent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+}
+
+.clock-dialog-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.9rem;
+}
+
+.clock-dialog-input {
+  min-height: 32px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, CanvasText 25%, transparent);
+  border-radius: 6px;
+  font: inherit;
+}
+
+.clock-dialog-note {
+  margin: 8px 0 0;
+  color: color-mix(in srgb, CanvasText 70%, transparent);
+  font-size: 0.85rem;
+}
+
+.clock-dialog-error {
+  margin: 8px 0 0;
+  color: #dc2626;
+  font-size: 0.85rem;
+  min-height: 1em;
+}
+
+.clock-dialog-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.clock-dialog-button {
+  min-height: 32px;
+  padding: 0 14px;
+  border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+  border-radius: 6px;
+  background: ButtonFace;
+  color: ButtonText;
+}
+
+.clock-dialog-button:disabled {
+  opacity: 0.6;
+}
+
+.clock-dialog-button-primary {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #ffffff;
+}

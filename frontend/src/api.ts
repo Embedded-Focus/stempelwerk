@@ -119,3 +119,46 @@ export async function updateClock(params: {
     throw new ClockUpdateError(response.status);
   }
 }
+
+export class HeadingRenameError extends Error {
+  status: number;
+  code: string | null;
+
+  constructor(status: number, code: string | null) {
+    super(`Heading rename failed: ${status}`);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+export async function renameHeading(params: {
+  fileId: string;
+  headingId: string;
+  title: string;
+  expectedRevision: string;
+}): Promise<void> {
+  const response = await fetch(
+    `/api/v1/files/${encodeURIComponent(params.fileId)}/headings/${encodeURIComponent(
+      params.headingId
+    )}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: params.title,
+        expected_revision: params.expectedRevision
+      })
+    }
+  );
+
+  if (!response.ok) {
+    let code: string | null = null;
+    try {
+      const body = (await response.json()) as { detail?: { code?: string } };
+      code = body.detail?.code ?? null;
+    } catch {
+      code = null;
+    }
+    throw new HeadingRenameError(response.status, code);
+  }
+}

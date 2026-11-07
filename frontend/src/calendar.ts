@@ -1,10 +1,25 @@
-import type { EventDropArg, EventInput, EventMountArg, EventSourceFuncArg } from "@fullcalendar/core";
+import type {
+  EventClickArg,
+  EventDropArg,
+  EventInput,
+  EventMountArg,
+  EventSourceFuncArg
+} from "@fullcalendar/core";
 import { Calendar } from "@fullcalendar/core";
 import type { EventResizeDoneArg } from "@fullcalendar/interaction";
 import interactionPlugin from "@fullcalendar/interaction";
 import timeGridPlugin from "@fullcalendar/timegrid";
 
-import { ClockUpdateError, getStatus, listClocks, updateClock } from "./api";
+import {
+  ClockUpdateError,
+  HeadingRenameError,
+  getStatus,
+  listClocks,
+  renameHeading,
+  updateClock,
+  type StatusResponse
+} from "./api";
+import { openRenameDialog } from "./clock-dialog";
 import { mountDebugPanel } from "./debug-panel";
 import "./styles.css";
 
@@ -39,6 +54,7 @@ if (!fileFilterElement || !reloadButton || !statusLine) {
 const fileFilter = fileFilterElement;
 let selectedFileIds = new Set<string>();
 let fileColors = new Map<string, string>();
+let writeMode: StatusResponse["write_mode"] = "read-only";
 
 let dragActive = false;
 let dragCancelRequested = false;
@@ -172,8 +188,66 @@ const calendar = new Calendar(calendarElement, {
   },
   eventResizeStop: () => {
     dragActive = false;
+  },
+  eventClick: (info: EventClickArg) => {
+    handleEventClick(info);
   }
 });
+
+const handleEventClick = (info: EventClickArg): void => {
+  if (writeMode === "read-only" || writeMode === "emacs") {
+    statusLine.textContent = "Renaming is not available in this write mode";
+    return;
+  }
+
+  const { fileId, headingId, outline, revision } = info.event.extendedProps as {
+    fileId?: unknown;
+    headingId?: unknown;
+    outline?: unknown;
+    revision?: unknown;
+  };
+
+  if (
+    typeof fileId !== "string" ||
+    typeof headingId !== "string" ||
+    !Array.isArray(outline) ||
+    typeof revision !== "string"
+  ) {
+    statusLine.textContent = "Could not rename heading";
+    return;
+  }
+
+  openRenameDialog({
+    fileId,
+    outline: outline.filter((part): part is string => typeof part === "string"),
+    title: info.event.title,
+    onSave: async (title: string) => {
+      try {
+        await renameHeading({
+          fileId,
+          headingId,
+          title,
+          expectedRevision: revision
+        });
+        statusLine.textContent = "Heading renamed";
+        calendar.refetchEvents();
+      } catch (error: unknown) {
+        if (error instanceof HeadingRenameError && error.status === 409) {
+          statusLine.textContent = "Org file changed on disk - reloading calendar";
+          calendar.refetchEvents();
+          return;
+        }
+        if (error instanceof HeadingRenameError && error.status === 422 && error.code === "invalid_title") {
+          throw new Error(
+            "This title cannot be stored as written. Check for line breaks, a leading uppercase word, or a trailing :tag:."
+          );
+        }
+        console.error(error);
+        throw new Error("Could not rename heading");
+      }
+    }
+  });
+}
 
 calendar.render();
 
@@ -183,6 +257,7 @@ reloadButton.addEventListener("click", () => {
 
 void getStatus()
   .then((status) => {
+    writeMode = status.write_mode;
     selectedFileIds = new Set(status.files);
     fileColors = new Map(Object.entries(status.file_colors));
     renderFileFilter(status.files);

@@ -2,7 +2,7 @@ PYTHON ?= uv run
 NPM ?= npm
 BACKEND_HOST ?= 127.0.0.1
 BACKEND_PORT ?= 8765
-CONTAINER_ENGINE ?= docker
+CONTAINER_ENGINE ?= podman  # or docker
 
 .PHONY: help install install-python install-frontend install-hooks dev-api dev-frontend demo-up demo-down demo-logs update-deps-dryrun update-deps pre-commit audit test lint check-format build-frontend clean
 

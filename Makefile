@@ -4,7 +4,7 @@ BACKEND_HOST ?= 127.0.0.1
 BACKEND_PORT ?= 8765
 CONTAINER_ENGINE ?= docker
 
-.PHONY: help install install-python install-frontend install-hooks dev-api dev-frontend demo-up demo-down demo-logs pre-commit audit test lint check-format build-frontend clean
+.PHONY: help install install-python install-frontend install-hooks dev-api dev-frontend demo-up demo-down demo-logs update-deps-dryrun update-deps pre-commit audit test lint check-format build-frontend clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-24s\033[0m %s\n", $$1, $$2}'
@@ -34,6 +34,12 @@ demo-down: ## Stop the container demo environment
 
 demo-logs: ## Follow container demo logs
 	$(CONTAINER_ENGINE) compose -f demo/compose.yaml logs -f
+
+update-deps-dryrun: ## Print current vs. latest versions of all project dependencies
+	$(PYTHON) stempelwerk-update-deps
+
+update-deps: ## Update demo image digests, Python lockfile, and frontend lockfile
+	$(PYTHON) stempelwerk-update-deps --apply
 
 pre-commit: ## Run pre-commit hooks on all tracked files
 	$(PYTHON) pre-commit run --all-files

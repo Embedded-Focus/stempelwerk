@@ -36,3 +36,24 @@ Follow service logs with:
 ```bash
 make demo-logs
 ```
+
+## Dependency updates
+
+The updater covers all pinned dependencies: the demo base image digests, the
+Python lockfile (`uv.lock`), and the frontend lockfile
+(`package-lock.json`). It prints current vs. latest for each group:
+
+```bash
+make update-deps-dryrun
+```
+
+Write the updates with:
+
+```bash
+make update-deps
+```
+
+The updater refreshes image digests within a fixed tag and package versions
+within their declared ranges. It never changes an image tag (a new Python
+minor or Node major can change behavior) and never widens a semver range.
+Bump a tag or a range by hand, then run the updater again.

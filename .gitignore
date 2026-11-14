@@ -63,6 +63,7 @@ Thumbs.db
 .claude/
 .pi/
 opencode.json
+plan-*.md
 
 demo/org/*
 !demo/org/customers.org

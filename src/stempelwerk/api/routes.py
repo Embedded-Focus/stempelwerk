@@ -1,13 +1,19 @@
+import asyncio
 import logging
 from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query
 
+from stempelwerk.caldav_reader import CalDAVReader
 from stempelwerk.config import AppConfig, load_config
 from stempelwerk.domain import (
     BackupInfo,
     BackupsListResponse,
+    CalDAVCalendarError,
+    CalDAVEvent,
+    CalDAVEventsResponse,
+    CalendarSource,
     ClockEntriesResponse,
     ClockEntry,
     ClockUpdateRequest,
@@ -29,11 +35,32 @@ from stempelwerk.org_writer import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 FileIdQuery = Annotated[list[str] | None, Query()]
+CalendarIdQuery = Annotated[list[str] | None, Query()]
 
 
 @router.get("/status", response_model=StatusResponse)
 def get_status() -> StatusResponse:
     config = load_config()
+    sources = [
+        CalendarSource(
+            id=file.id,
+            name=file.id,
+            kind="org",
+            color=file.color,
+            editable=config.write_mode not in ("read-only", "emacs"),
+        )
+        for file in config.files
+    ]
+    sources.extend(
+        CalendarSource(
+            id=calendar.id,
+            name=calendar.name,
+            kind="caldav",
+            color=calendar.color,
+            editable=False,
+        )
+        for calendar in config.caldav_calendars
+    )
     return StatusResponse(
         status="ok",
         emacs_available=False,
@@ -41,6 +68,7 @@ def get_status() -> StatusResponse:
         timezone=config.timezone,
         files=[file.id for file in config.files],
         file_colors={file.id: file.color for file in config.files if file.color is not None},
+        sources=sources,
     )
 
 
@@ -121,6 +149,66 @@ def _ensure_writable(config: AppConfig, action: str) -> None:
             action,
         )
         raise HTTPException(status_code=422, detail={"code": "emacs_not_supported"})
+
+
+@router.get("/caldav/events", response_model=CalDAVEventsResponse)
+async def list_caldav_events(
+    start: datetime,
+    end: datetime,
+    calendar_id: CalendarIdQuery = None,
+    refresh: bool = False,
+) -> CalDAVEventsResponse:
+    for value in (start, end):
+        if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+            raise HTTPException(status_code=422, detail={"code": "timezone_required"})
+    if end <= start:
+        raise HTTPException(status_code=422, detail={"code": "invalid_time_range"})
+
+    config = load_config()
+    requested_ids = list(dict.fromkeys(calendar_id or []))
+    configured_ids = {calendar.id for calendar in config.caldav_calendars}
+    unknown = sorted(set(requested_ids) - configured_ids)
+    if unknown:
+        raise HTTPException(
+            status_code=422, detail={"code": "unknown_calendar_id", "calendars": unknown}
+        )
+
+    selected_ids = requested_ids or [calendar.id for calendar in config.caldav_calendars]
+    reader = CalDAVReader(
+        config.caldav_calendars,
+        timeout_seconds=config.caldav_timeout_seconds,
+        cache_seconds=config.caldav_cache_seconds,
+    )
+    results = await asyncio.gather(
+        *(
+            asyncio.to_thread(reader.read_events, calendar_id, start, end, refresh=refresh)
+            for calendar_id in selected_ids
+        ),
+        return_exceptions=True,
+    )
+
+    events: list[CalDAVEvent] = []
+    errors: list[CalDAVCalendarError] = []
+    for selected_id, result in zip(selected_ids, results, strict=True):
+        if isinstance(result, BaseException):
+            if not isinstance(result, Exception):
+                raise result
+            logger.warning("CalDAV calendar %s failed with %s", selected_id, type(result).__name__)
+            errors.append(CalDAVCalendarError(calendar_id=selected_id))
+            continue
+        events.extend(result)
+    # ISO strings keep the sort deterministic without comparing date and
+    # datetime objects directly, which raises TypeError.
+    events.sort(
+        key=lambda event: (
+            event.start.isoformat(),
+            event.end.isoformat(),
+            event.calendar_id,
+            event.id,
+        )
+    )
+    errors.sort(key=lambda error: error.calendar_id)
+    return CalDAVEventsResponse(events=events, errors=errors)
 
 
 @router.patch("/clocks/{clock_id}", response_model=ClockEntry)

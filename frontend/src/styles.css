@@ -26,11 +26,38 @@ body {
   flex-wrap: wrap;
 }
 
-.file-filter {
+.source-filter {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.filter-group {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.filter-group-label {
+  color: color-mix(in srgb, CanvasText 70%, transparent);
+  font-size: 0.9rem;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+}
+
+@media (max-width: 800px) {
+  .source-filter {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .filter-group {
+    gap: 6px;
+  }
 }
 
 .file-option {
@@ -60,9 +87,51 @@ body {
 }
 
 .status-line,
-.empty-files {
+.empty-sources {
   color: color-mix(in srgb, CanvasText 70%, transparent);
   font-size: 0.9rem;
+}
+
+.caldav-dialog {
+  border: 1px solid color-mix(in srgb, CanvasText 25%, transparent);
+  border-radius: 8px;
+  padding: 16px;
+  min-width: 280px;
+  max-width: min(480px, 90vw);
+}
+
+.caldav-dialog-heading {
+  margin: 0 0 8px;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.caldav-dialog-times,
+.caldav-dialog-calendar,
+.caldav-dialog-location {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.caldav-dialog-calendar,
+.caldav-dialog-location {
+  color: color-mix(in srgb, CanvasText 70%, transparent);
+}
+
+.caldav-dialog-buttons {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.caldav-dialog-button {
+  min-height: 32px;
+  padding: 0 14px;
+  border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+  border-radius: 6px;
+  background: ButtonFace;
+  color: ButtonText;
 }
 
 #calendar {

@@ -14,13 +14,16 @@ import {
   ClockUpdateError,
   HeadingRenameError,
   getStatus,
+  listCalDAVEvents,
   listClocks,
   listHeadings,
   renameHeading,
   updateClock,
+  type CalendarSource,
   type ClockEntry,
   type StatusResponse
 } from "./api";
+import { openCalDAVDialog } from "./caldav-dialog";
 import {
   openEntryDialog,
   type EntryDialogValues
@@ -43,24 +46,28 @@ if (!calendarElement || !appElement) {
 const toolbarElement = document.createElement("section");
 toolbarElement.className = "toolbar";
 toolbarElement.innerHTML = `
-  <div class="file-filter" aria-label="Org files"></div>
+  <div class="source-filter" aria-label="Calendar sources"></div>
   <button class="reload-button" type="button">Reload</button>
   <span class="status-line" role="status"></span>
 `;
 appElement.insertBefore(toolbarElement, calendarElement);
 
-const fileFilterElement = toolbarElement.querySelector<HTMLElement>(".file-filter");
+const sourceFilterElement = toolbarElement.querySelector<HTMLElement>(".source-filter");
 const reloadButton = toolbarElement.querySelector<HTMLButtonElement>(".reload-button");
 const statusLine = toolbarElement.querySelector<HTMLElement>(".status-line");
 
-if (!fileFilterElement || !reloadButton || !statusLine) {
+if (!sourceFilterElement || !reloadButton || !statusLine) {
   throw new Error("Toolbar controls not found");
 }
 
-const fileFilter = fileFilterElement;
+const sourceFilter = sourceFilterElement;
 let selectedFileIds = new Set<string>();
+let selectedCaldavIds = new Set<string>();
+let orgSources: CalendarSource[] = [];
+let caldavSources: CalendarSource[] = [];
 let fileColors = new Map<string, string>();
 let writeMode: StatusResponse["write_mode"] = "read-only";
+let refreshCalDAVNext = false;
 
 let dragActive = false;
 let dragCancelRequested = false;
@@ -79,6 +86,12 @@ document.addEventListener("keydown", (event: KeyboardEvent) => {
 
 const handleClockChange = async (info: EventDropArg | EventResizeDoneArg): Promise<void> => {
   const { event } = info;
+
+  if (event.extendedProps.sourceKind !== "org") {
+    info.revert();
+    statusLine.textContent = "Calendar events cannot be changed";
+    return;
+  }
 
   if (dragCancelRequested) {
     dragCancelRequested = false;
@@ -141,14 +154,37 @@ const calendar = new Calendar(calendarElement, {
   },
   events: async (info: EventSourceFuncArg): Promise<EventInput[]> => {
     statusLine.textContent = "Loading";
-    try {
-      const response = await listClocks({
-        start: info.startStr,
-        end: info.endStr,
-        fileIds: [...selectedFileIds]
-      });
-      statusLine.textContent = `${response.clocks.length} clocks`;
-      return response.clocks.map((clock) => ({
+
+    const refresh = refreshCalDAVNext;
+    refreshCalDAVNext = false;
+
+    // Fetch both source kinds independently so one failure keeps the other's
+    // events on the calendar. An empty Org selection resolves to no clocks;
+    // calling the backend with no file_id would return every file's clocks.
+    const [orgResult, caldavResult] = await Promise.allSettled([
+      selectedFileIds.size > 0
+        ? listClocks({
+            start: info.startStr,
+            end: info.endStr,
+            fileIds: [...selectedFileIds]
+          })
+        : Promise.resolve({ clocks: [], revisions: {} }),
+      selectedCaldavIds.size > 0
+        ? listCalDAVEvents({
+            start: info.startStr,
+            end: info.endStr,
+            calendarIds: [...selectedCaldavIds],
+            refresh
+          })
+        : Promise.resolve({ events: [], errors: [] })
+    ]);
+
+    const warnings: string[] = [];
+    let clockInputs: EventInput[] = [];
+    let caldavInputs: EventInput[] = [];
+
+    if (orgResult.status === "fulfilled") {
+      clockInputs = orgResult.value.clocks.map((clock) => ({
         id: clock.id,
         title: clock.heading_title,
         start: clock.start,
@@ -160,6 +196,7 @@ const calendar = new Calendar(calendarElement, {
         startEditable: clock.editable,
         durationEditable: clock.editable,
         extendedProps: {
+          sourceKind: "org",
           fileId: clock.file_id,
           headingId: clock.heading_id,
           outline: clock.outline,
@@ -167,11 +204,52 @@ const calendar = new Calendar(calendarElement, {
           editable: clock.editable
         }
       }));
-    } catch (error: unknown) {
-      console.error(error);
-      statusLine.textContent = "Could not load clocks";
-      return [];
+    } else {
+      console.error(orgResult.reason);
+      warnings.push("Org clocks unavailable");
     }
+
+    if (caldavResult.status === "fulfilled") {
+      caldavInputs = caldavResult.value.events.map((caldavEvent) => {
+        const color = colorForCaldavId(caldavEvent.calendar_id);
+        return {
+          id: caldavEvent.id,
+          title: caldavEvent.title,
+          start: caldavEvent.start,
+          end: caldavEvent.end,
+          allDay: caldavEvent.all_day,
+          backgroundColor: color,
+          borderColor: color,
+          textColor: textColorForBackground(color),
+          editable: false,
+          startEditable: false,
+          durationEditable: false,
+          extendedProps: {
+            sourceKind: "caldav",
+            calendarId: caldavEvent.calendar_id,
+            calendarName: caldavEvent.calendar_name,
+            location: caldavEvent.location
+          }
+        };
+      });
+      if (caldavResult.value.errors.length > 0) {
+        const unavailableNames = caldavResult.value.errors
+          .map((error) => caldavNameForId(error.calendar_id))
+          .filter((name): name is string => name !== null);
+        if (unavailableNames.length > 0) {
+          warnings.push(`Calendar ${unavailableNames.join(", ")} unavailable`);
+        } else {
+          warnings.push("Calendar unavailable");
+        }
+      }
+    } else {
+      console.error(caldavResult.reason);
+      warnings.push("Calendars unavailable");
+    }
+
+    const summary = `${clockInputs.length} clocks, ${caldavInputs.length} calendar events`;
+    statusLine.textContent = warnings.length > 0 ? `${summary} - ${warnings.join("; ")}` : summary;
+    return [...clockInputs, ...caldavInputs];
   },
   eventDidMount: (info: EventMountArg) => {
     const outline = info.event.extendedProps.outline;
@@ -213,7 +291,33 @@ const calendar = new Calendar(calendarElement, {
 
 calendarElement.after(statsPanel.element);
 
+const openCalDAVEventDialog = (event: EventApi): void => {
+  const { calendarName, location } = event.extendedProps as {
+    calendarName?: unknown;
+    location?: unknown;
+  };
+
+  if (event.start === null || event.end === null || typeof calendarName !== "string") {
+    statusLine.textContent = "Could not open the entry";
+    return;
+  }
+
+  openCalDAVDialog({
+    title: event.title,
+    start: event.start,
+    end: event.end,
+    allDay: event.allDay,
+    calendarName,
+    location: typeof location === "string" ? location : null
+  });
+};
+
 const handleEventOpen = (event: EventApi): void => {
+  if (event.extendedProps.sourceKind === "caldav") {
+    openCalDAVEventDialog(event);
+    return;
+  }
+
   if (writeMode === "read-only" || writeMode === "emacs") {
     statusLine.textContent = "Editing is not available in this write mode";
     return;
@@ -392,6 +496,8 @@ function updateStats(): void {
   for (const event of calendar.getEvents()) {
     const { fileId, headingId, outline } = event.extendedProps;
     if (
+      // Work statistics count only Org clocks, never CalDAV events.
+      event.extendedProps.sourceKind !== "org" ||
       event.start === null ||
       event.end === null ||
       typeof fileId !== "string" ||
@@ -421,6 +527,7 @@ function updateStats(): void {
 calendar.render();
 
 reloadButton.addEventListener("click", () => {
+  refreshCalDAVNext = true;
   calendar.refetchEvents();
   refreshDebugPanel();
 });
@@ -428,10 +535,14 @@ reloadButton.addEventListener("click", () => {
 void getStatus()
   .then((status) => {
     writeMode = status.write_mode;
-    selectedFileIds = new Set(status.files);
+    orgSources = status.sources.filter((source) => source.kind === "org");
+    caldavSources = status.sources.filter((source) => source.kind === "caldav");
+    selectedFileIds = new Set(orgSources.map((source) => source.id));
+    selectedCaldavIds = new Set(caldavSources.map((source) => source.id));
     fileColors = new Map(Object.entries(status.file_colors));
-    renderFileFilter(status.files);
-    statusLine.textContent = status.files.length === 0 ? "No configured files" : "Ready";
+    renderSourceFilter();
+    calendar.setOption("allDaySlot", caldavSources.length > 0);
+    statusLine.textContent = status.sources.length === 0 ? "No configured sources" : "Ready";
     if (debugEnabled) {
       refreshDebugPanel = mountDebugPanel(appElement, status.files, {
         onStatus: (message: string) => {
@@ -446,49 +557,100 @@ void getStatus()
     statusLine.textContent = "Backend unavailable";
   });
 
-function renderFileFilter(fileIds: string[]): void {
-  fileFilter.replaceChildren();
+function renderSourceFilter(): void {
+  sourceFilter.replaceChildren();
 
-  if (fileIds.length === 0) {
+  if (orgSources.length === 0 && caldavSources.length === 0) {
     const empty = document.createElement("span");
-    empty.className = "empty-files";
-    empty.textContent = "No configured files";
-    fileFilter.append(empty);
+    empty.className = "empty-sources";
+    empty.textContent = "No configured sources";
+    sourceFilter.append(empty);
     return;
   }
 
-  for (const fileId of fileIds) {
+  if (orgSources.length > 0) {
+    sourceFilter.append(
+      renderFilterGroup("Org files", orgSources, (source) => {
+        if (selectedFileIds.has(source.id)) {
+          selectedFileIds.delete(source.id);
+        } else {
+          selectedFileIds.add(source.id);
+        }
+        calendar.refetchEvents();
+      })
+    );
+  }
+
+  if (caldavSources.length > 0) {
+    sourceFilter.append(
+      renderFilterGroup("Calendars", caldavSources, (source) => {
+        if (selectedCaldavIds.has(source.id)) {
+          selectedCaldavIds.delete(source.id);
+        } else {
+          selectedCaldavIds.add(source.id);
+        }
+        calendar.refetchEvents();
+      })
+    );
+  }
+}
+
+function renderFilterGroup(
+  groupLabel: string,
+  sources: CalendarSource[],
+  onToggle: (source: CalendarSource) => void
+): HTMLElement {
+  const group = document.createElement("div");
+  group.className = "filter-group";
+
+  const heading = document.createElement("span");
+  heading.className = "filter-group-label";
+  heading.textContent = groupLabel;
+  group.append(heading);
+
+  for (const source of sources) {
     const label = document.createElement("label");
     label.className = "file-option";
 
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
-    checkbox.value = fileId;
-    checkbox.checked = selectedFileIds.has(fileId);
+    checkbox.value = source.id;
+    checkbox.checked =
+      source.kind === "org" ? selectedFileIds.has(source.id) : selectedCaldavIds.has(source.id);
     checkbox.addEventListener("change", () => {
-      if (checkbox.checked) {
-        selectedFileIds.add(fileId);
-      } else {
-        selectedFileIds.delete(fileId);
-      }
-      calendar.refetchEvents();
+      onToggle(source);
     });
 
     const text = document.createElement("span");
-    text.textContent = fileId;
+    text.textContent = source.name;
 
     const swatch = document.createElement("span");
     swatch.className = "file-swatch";
-    swatch.style.backgroundColor = colorForFile(fileId);
+    swatch.style.backgroundColor = colorForSource(source);
     swatch.setAttribute("aria-hidden", "true");
 
     label.append(checkbox, swatch, text);
-    fileFilter.append(label);
+    group.append(label);
   }
+
+  return group;
 }
 
 function colorForFile(fileId: string): string {
   return fileColors.get(fileId) ?? fallbackColor(fileId);
+}
+
+function colorForSource(source: CalendarSource): string {
+  return source.color ?? fallbackColor(source.id);
+}
+
+function colorForCaldavId(calendarId: string): string {
+  const source = caldavSources.find((entry) => entry.id === calendarId);
+  return source !== undefined ? colorForSource(source) : fallbackColor(calendarId);
+}
+
+function caldavNameForId(calendarId: string): string | null {
+  return caldavSources.find((entry) => entry.id === calendarId)?.name ?? null;
 }
 
 function fallbackColor(fileId: string): string {

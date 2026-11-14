@@ -5,6 +5,15 @@ export interface StatusResponse {
   timezone: string;
   files: string[];
   file_colors: Record<string, string>;
+  sources: CalendarSource[];
+}
+
+export interface CalendarSource {
+  id: string;
+  name: string;
+  kind: "org" | "caldav";
+  color: string | null;
+  editable: boolean;
 }
 
 export interface ClockEntry {
@@ -41,6 +50,55 @@ export async function getStatus(): Promise<StatusResponse> {
     throw new Error(`Status request failed: ${response.status}`);
   }
   return response.json() as Promise<StatusResponse>;
+}
+
+export interface CalDAVEvent {
+  id: string;
+  calendar_id: string;
+  calendar_name: string;
+  title: string;
+  start: string;
+  end: string;
+  all_day: boolean;
+  location: string | null;
+  editable: false;
+}
+
+export interface CalDAVCalendarError {
+  calendar_id: string;
+  code: "unavailable";
+  message: string;
+}
+
+export interface CalDAVEventsResponse {
+  events: CalDAVEvent[];
+  errors: CalDAVCalendarError[];
+}
+
+export async function listCalDAVEvents(params: {
+  start: string;
+  end: string;
+  calendarIds: string[];
+  refresh: boolean;
+}): Promise<CalDAVEventsResponse> {
+  const searchParams = new URLSearchParams({
+    start: params.start,
+    end: params.end
+  });
+
+  for (const calendarId of params.calendarIds) {
+    searchParams.append("calendar_id", calendarId);
+  }
+
+  if (params.refresh) {
+    searchParams.set("refresh", "true");
+  }
+
+  const response = await fetch(`/api/v1/caldav/events?${searchParams}`);
+  if (!response.ok) {
+    throw new Error(`CalDAV event request failed: ${response.status}`);
+  }
+  return response.json() as Promise<CalDAVEventsResponse>;
 }
 
 export async function listClocks(params: {

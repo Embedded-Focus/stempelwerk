@@ -9,6 +9,8 @@ first_day = 1
 snap_minutes = 5
 working_hours_start = "07:00"
 working_hours_end = "20:00"
+caldav_timeout_seconds = 10
+caldav_cache_seconds = 60
 
 [[files]]
 id = "work"
@@ -21,3 +23,22 @@ path = "/home/user/org/customers.org"
 color = "#16a34a"
 include_tags = ["customer"]
 exclude_tags = ["ARCHIVE"]
+
+# Read-only CalDAV calendars. Credentials are never stored in this file;
+# username_env and password_env name environment variables that hold them.
+# Multiple calendar entries can share the same environment variable names.
+[[caldav_calendars]]
+id = "team"
+name = "Team calendar"
+url = "https://caldav.example.com/dav/team/"
+username_env = "STEMPELWERK_CALDAV_USERNAME"
+password_env = "STEMPELWERK_CALDAV_PASSWORD"
+color = "#d97706"
+
+[[caldav_calendars]]
+id = "holidays"
+name = "Public holidays"
+url = "https://caldav.example.com/dav/holidays/"
+username_env = "STEMPELWERK_CALDAV_USERNAME"
+password_env = "STEMPELWERK_CALDAV_PASSWORD"
+color = "#7c3aed"

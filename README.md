@@ -39,6 +39,7 @@ flowchart LR
         Routes["API routes"]
         Reader["Org reader"]
         Writer["Org writer"]
+        CalDAVReader["CalDAV reader"]
         Config["Configuration"]
     end
 
@@ -46,6 +47,10 @@ flowchart LR
         ConfigFile["config.toml"]
         OrgFiles["Org files with CLOCK entries"]
         Backups["Optional backups"]
+    end
+
+    subgraph Remote["Remote services"]
+        CalDAV["CalDAV servers"]
     end
 
     Calendar <--> ApiClient
@@ -57,7 +62,13 @@ flowchart LR
     Reader --> OrgFiles
     Writer --> OrgFiles
     Writer --> Backups
+    Routes --> CalDAVReader
+    CalDAVReader --> CalDAV
 ```
+
+The browser talks only to the local API. The backend CalDAV reader fetches
+read-only events from explicitly configured remote CalDAV servers; the browser
+never contacts them directly.
 
 ## Development
 
@@ -98,6 +109,64 @@ STEMPELWERK_CONFIG=./config.local.toml make dev-api
 The browser only receives configured file IDs. Calendar filtering uses repeated
 `file_id` query parameters, for example
 `/api/v1/clocks?...&file_id=work&file_id=customers`.
+
+## CalDAV calendars (read-only)
+
+Stempelwerk can display events from remote CalDAV calendars next to Org clock
+entries. Each calendar is configured explicitly with a `[[caldav_calendars]]`
+entry and an exact collection URL. There is no automatic discovery: copy the
+collection URL from your CalDAV server.
+
+You can configure any number of calendars. The backend reads credentials from
+environment variables named in the configuration, so no credentials are stored
+in `config.toml`. Multiple calendars can share the same username and password
+environment variables.
+
+```toml
+caldav_timeout_seconds = 10
+caldav_cache_seconds = 60
+
+[[caldav_calendars]]
+id = "team"
+name = "Team calendar"
+url = "https://caldav.example.com/dav/team/"
+username_env = "STEMPELWERK_CALDAV_USERNAME"
+password_env = "STEMPELWERK_CALDAV_PASSWORD"
+color = "#d97706"
+
+[[caldav_calendars]]
+id = "holidays"
+name = "Public holidays"
+url = "https://caldav.example.com/dav/holidays/"
+username_env = "STEMPELWERK_CALDAV_USERNAME"
+password_env = "STEMPELWERK_CALDAV_PASSWORD"
+color = "#7c3aed"
+```
+
+Set the environment variables before starting the backend:
+
+```bash
+export STEMPELWERK_CALDAV_USERNAME="your-username"
+export STEMPELWERK_CALDAV_PASSWORD="your-password"
+```
+
+Behavior and limits:
+
+- **Read-only.** CalDAV events cannot be created, edited, moved, or deleted.
+  Double-clicking an event opens a details-only dialog. They also do not count
+  in the work statistics, which are computed from Org clock entries only.
+- **Visible fields.** The calendar shows the event title, its time, the
+  calendar name, and the location when the server provides one.
+- **Partial failure.** Calendars are fetched independently. If one server is
+  unreachable, the remaining calendars still load and the status line shows a
+  warning naming the unavailable calendars.
+- **Cache and reload.** Responses are cached in memory for
+  `caldav_cache_seconds` (default 60). Requests time out after
+  `caldav_timeout_seconds` (default 10). Use the Reload button to bypass the
+  cache and fetch fresh events.
+- **TLS required.** URLs must use HTTPS and the server certificate must verify
+  against the system trust store. OAuth and insecure or self-signed certificate
+  bypass are not supported in this version.
 
 ## Demo
 

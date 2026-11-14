@@ -1,8 +1,13 @@
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import ClassVar
 
+import pytest
 from fastapi.testclient import TestClient
 
 from stempelwerk.app import create_app
+from stempelwerk.config import CalDAVCalendarConfig
+from stempelwerk.domain import CalDAVEvent
 from stempelwerk.revisions import revision_for_file
 
 
@@ -251,6 +256,119 @@ color = "#2563eb"
 
     assert response.status_code == 200
     assert response.json()["file_colors"] == {"work": "#2563eb"}
+
+
+def test_status_endpoint_lists_org_and_caldav_sources(tmp_path: Path, monkeypatch) -> None:
+    work_file = tmp_path / "work.org"
+    work_file.write_text("* Work\n", encoding="utf-8")
+    home_file = tmp_path / "home.org"
+    home_file.write_text("* Home\n", encoding="utf-8")
+    _write_config(
+        tmp_path,
+        f"""
+[[files]]
+id = "work"
+path = "{work_file}"
+color = "#2563eb"
+
+[[files]]
+id = "home"
+path = "{home_file}"
+
+[[caldav_calendars]]
+id = "personal"
+name = "Personal Calendar"
+url = "https://example.com/dav/personal"
+username_env = "CALDAV_USER"
+password_env = "CALDAV_PASSWORD"
+color = "#16a34a"
+
+[[caldav_calendars]]
+id = "team"
+name = "Team Calendar"
+url = "https://example.com/dav/team"
+username_env = "CALDAV_USER"
+password_env = "CALDAV_PASSWORD"
+""",
+        monkeypatch,
+    )
+    client = TestClient(create_app())
+
+    response = client.get("/api/v1/status")
+
+    assert response.status_code == 200
+    assert response.json()["sources"] == [
+        {
+            "id": "work",
+            "name": "work",
+            "kind": "org",
+            "color": "#2563eb",
+            "editable": True,
+        },
+        {
+            "id": "home",
+            "name": "home",
+            "kind": "org",
+            "color": None,
+            "editable": True,
+        },
+        {
+            "id": "personal",
+            "name": "Personal Calendar",
+            "kind": "caldav",
+            "color": "#16a34a",
+            "editable": False,
+        },
+        {
+            "id": "team",
+            "name": "Team Calendar",
+            "kind": "caldav",
+            "color": None,
+            "editable": False,
+        },
+    ]
+
+
+@pytest.mark.parametrize("write_mode", ["read-only", "emacs"])
+def test_status_endpoint_marks_org_sources_not_editable(
+    tmp_path: Path, monkeypatch, write_mode: str
+) -> None:
+    work_file = tmp_path / "work.org"
+    work_file.write_text("* Work\n", encoding="utf-8")
+    _write_config(
+        tmp_path,
+        f"""
+write_mode = "{write_mode}"
+[[files]]
+id = "work"
+path = "{work_file}"
+""",
+        monkeypatch,
+    )
+    client = TestClient(create_app())
+
+    response = client.get("/api/v1/status")
+
+    assert response.status_code == 200
+    assert response.json()["sources"] == [
+        {
+            "id": "work",
+            "name": "work",
+            "kind": "org",
+            "color": None,
+            "editable": False,
+        }
+    ]
+
+
+def test_status_endpoint_has_no_sources_without_configuration(monkeypatch, tmp_path: Path) -> None:
+    _write_config(tmp_path, "", monkeypatch)
+    client = TestClient(create_app())
+
+    response = client.get("/api/v1/status")
+
+    assert response.status_code == 200
+    assert response.json()["sources"] == []
 
 
 def _configure_work_file(
@@ -1052,3 +1170,337 @@ def test_patch_clock_move_rejects_when_read_only(tmp_path: Path, monkeypatch, ca
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "read_only"
     assert any("read-only" in record.message for record in caplog.records)
+
+
+# --- CalDAV events endpoint ---
+
+
+class FakeCalDAVReader:
+    """Stand-in for CalDAVReader that records calls and returns canned results.
+
+    The class variable ``behavior`` maps calendar ids to either a list of
+    CalDAVEvent objects or an exception instance to raise for that calendar.
+    """
+
+    behavior: ClassVar[dict[str, list[CalDAVEvent] | Exception]] = {}
+    calls: ClassVar[list[tuple[str, str, str, bool]]] = []
+    init_kwargs: ClassVar[list[dict[str, object]]] = []
+
+    def __init__(
+        self,
+        calendars: list[CalDAVCalendarConfig],
+        *,
+        timeout_seconds: int = 10,
+        cache_seconds: int = 60,
+        **kwargs: object,
+    ) -> None:
+        self.calendars = calendars
+        self.init_kwargs.append(
+            {
+                "calendar_ids": [calendar.id for calendar in calendars],
+                "timeout_seconds": timeout_seconds,
+                "cache_seconds": cache_seconds,
+            }
+        )
+
+    def read_events(
+        self,
+        calendar_id: str,
+        start: datetime,
+        end: datetime,
+        *,
+        refresh: bool = False,
+    ) -> list[CalDAVEvent]:
+        FakeCalDAVReader.calls.append((calendar_id, start.isoformat(), end.isoformat(), refresh))
+        outcome = FakeCalDAVReader.behavior[calendar_id]
+        if isinstance(outcome, Exception):
+            raise outcome
+        return list(outcome)
+
+
+def _caldav_event(calendar_id: str, event_id: str, title: str = "Event") -> CalDAVEvent:
+    start = datetime(2026, 8, 3, 9, 0, tzinfo=UTC)
+    end = datetime(2026, 8, 3, 10, 0, tzinfo=UTC)
+    return CalDAVEvent(
+        id=event_id,
+        calendar_id=calendar_id,
+        calendar_name=calendar_id,
+        title=title,
+        start=start,
+        end=end,
+        all_day=False,
+    )
+
+
+def _write_caldav_config(tmp_path: Path, monkeypatch, *, timeout: int = 7, cache: int = 42):
+    _write_config(
+        tmp_path,
+        f"""
+caldav_timeout_seconds = {timeout}
+caldav_cache_seconds = {cache}
+
+[[caldav_calendars]]
+id = "home"
+name = "Home"
+url = "https://caldav.example.invalid/home/"
+username_env = "CALDAV_HOME_USER"
+password_env = "CALDAV_HOME_PASS"
+
+[[caldav_calendars]]
+id = "work"
+name = "Work"
+url = "https://caldav.example.invalid/work/"
+username_env = "CALDAV_WORK_USER"
+password_env = "CALDAV_WORK_PASS"
+""",
+        monkeypatch,
+    )
+
+
+@pytest.fixture()
+def fake_caldav_reader(monkeypatch):
+    from stempelwerk.api import routes as routes_module
+
+    FakeCalDAVReader.behavior = {}
+    FakeCalDAVReader.calls = []
+    FakeCalDAVReader.init_kwargs = []
+    monkeypatch.setattr(routes_module, "CalDAVReader", FakeCalDAVReader)
+    return FakeCalDAVReader
+
+
+def test_caldav_events_without_calendars_returns_empty(monkeypatch, tmp_path) -> None:
+    _write_config(tmp_path, "", monkeypatch)
+    client = TestClient(create_app())
+
+    response = client.get(
+        "/api/v1/caldav/events",
+        params={"start": "2026-08-03T00:00:00+00:00", "end": "2026-08-04T00:00:00+00:00"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["events"] == []
+    assert body["errors"] == []
+
+
+def test_caldav_events_without_ids_loads_all_calendars(
+    fake_caldav_reader, tmp_path, monkeypatch
+) -> None:
+    _write_caldav_config(tmp_path, monkeypatch)
+    fake_caldav_reader.behavior = {
+        "home": [_caldav_event("home", "caldav:home:1")],
+        "work": [_caldav_event("work", "caldav:work:1")],
+    }
+    client = TestClient(create_app())
+
+    response = client.get(
+        "/api/v1/caldav/events",
+        params={"start": "2026-08-03T00:00:00+00:00", "end": "2026-08-04T00:00:00+00:00"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [event["calendar_id"] for event in body["events"]] == ["home", "work"]
+    assert [(call[0], call[3]) for call in fake_caldav_reader.calls] == [
+        ("home", False),
+        ("work", False),
+    ]
+
+
+def test_caldav_events_repeated_ids_keep_first_order_and_skip_duplicates(
+    fake_caldav_reader, tmp_path, monkeypatch
+) -> None:
+    _write_caldav_config(tmp_path, monkeypatch)
+    fake_caldav_reader.behavior = {
+        "home": [_caldav_event("home", "caldav:home:1")],
+        "work": [_caldav_event("work", "caldav:work:1")],
+    }
+    client = TestClient(create_app())
+
+    response = client.get(
+        "/api/v1/caldav/events",
+        params=[
+            ("start", "2026-08-03T00:00:00+00:00"),
+            ("end", "2026-08-04T00:00:00+00:00"),
+            ("calendar_id", "work"),
+            ("calendar_id", "home"),
+            ("calendar_id", "work"),
+        ],
+    )
+
+    assert response.status_code == 200
+    # Combined events are sorted deterministically, the selection order shows
+    # up in the reader calls instead.
+    assert [event["calendar_id"] for event in response.json()["events"]] == ["home", "work"]
+    assert [call[0] for call in fake_caldav_reader.calls] == ["work", "home"]
+
+
+def test_caldav_events_unknown_ids_return_422_without_querying(
+    fake_caldav_reader, tmp_path, monkeypatch
+) -> None:
+    _write_caldav_config(tmp_path, monkeypatch)
+    client = TestClient(create_app())
+
+    response = client.get(
+        "/api/v1/caldav/events",
+        params=[
+            ("start", "2026-08-03T00:00:00+00:00"),
+            ("end", "2026-08-04T00:00:00+00:00"),
+            ("calendar_id", "zebra"),
+            ("calendar_id", "home"),
+            ("calendar_id", "alpaca"),
+        ],
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == {
+        "code": "unknown_calendar_id",
+        "calendars": ["alpaca", "zebra"],
+    }
+    assert fake_caldav_reader.calls == []
+
+
+def test_caldav_events_rejects_end_before_start(fake_caldav_reader, tmp_path, monkeypatch) -> None:
+    _write_caldav_config(tmp_path, monkeypatch)
+    client = TestClient(create_app())
+
+    response = client.get(
+        "/api/v1/caldav/events",
+        params={"start": "2026-08-04T00:00:00+00:00", "end": "2026-08-03T00:00:00+00:00"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == {"code": "invalid_time_range"}
+    assert fake_caldav_reader.calls == []
+
+
+@pytest.mark.parametrize("naive_field", ["start", "end"])
+def test_caldav_events_rejects_naive_datetimes(
+    fake_caldav_reader, tmp_path, monkeypatch, naive_field
+) -> None:
+    _write_caldav_config(tmp_path, monkeypatch)
+    client = TestClient(create_app())
+
+    params = {"start": "2026-08-03T00:00:00+00:00", "end": "2026-08-04T00:00:00+00:00"}
+    params[naive_field] = "2026-08-03T00:00:00"
+
+    response = client.get("/api/v1/caldav/events", params=params)
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == {"code": "timezone_required"}
+    assert fake_caldav_reader.calls == []
+
+
+def test_caldav_events_failed_calendar_returns_error_and_keeps_events(
+    fake_caldav_reader, tmp_path, monkeypatch, caplog
+) -> None:
+    _write_caldav_config(tmp_path, monkeypatch)
+    fake_caldav_reader.behavior = {
+        "home": [_caldav_event("home", "caldav:home:1")],
+        "work": RuntimeError("connect failed with secret-token-abc to /etc/passwd"),
+    }
+    client = TestClient(create_app())
+
+    with caplog.at_level("WARNING", logger="stempelwerk.api.routes"):
+        response = client.get(
+            "/api/v1/caldav/events",
+            params={"start": "2026-08-03T00:00:00+00:00", "end": "2026-08-04T00:00:00+00:00"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [event["calendar_id"] for event in body["events"]] == ["home"]
+    assert body["errors"] == [
+        {
+            "calendar_id": "work",
+            "code": "unavailable",
+            "message": "Calendar is unavailable",
+        }
+    ]
+    assert "secret-token-abc" not in caplog.text
+    assert "/etc/passwd" not in caplog.text
+    warnings = [record for record in caplog.records if "work" in record.getMessage()]
+    assert any("RuntimeError" in record.getMessage() for record in warnings)
+
+
+def test_caldav_events_sort_events_deterministically(
+    fake_caldav_reader, tmp_path, monkeypatch
+) -> None:
+    _write_caldav_config(tmp_path, monkeypatch)
+    fake_caldav_reader.behavior = {
+        # Same start/end as the other calendars so ties are broken by
+        # calendar_id, then event id.
+        "work": [
+            _caldav_event("work", "caldav:work:b"),
+            _caldav_event("work", "caldav:work:a"),
+        ],
+        "home": [_caldav_event("home", "caldav:home:1")],
+    }
+    client = TestClient(create_app())
+
+    response = client.get(
+        "/api/v1/caldav/events",
+        params={"start": "2026-08-03T00:00:00+00:00", "end": "2026-08-04T00:00:00+00:00"},
+    )
+
+    assert response.status_code == 200
+    assert [(event["calendar_id"], event["id"]) for event in response.json()["events"]] == [
+        ("home", "caldav:home:1"),
+        ("work", "caldav:work:a"),
+        ("work", "caldav:work:b"),
+    ]
+
+
+def test_caldav_events_forwards_refresh_flag(fake_caldav_reader, tmp_path, monkeypatch) -> None:
+    _write_caldav_config(tmp_path, monkeypatch)
+    fake_caldav_reader.behavior = {"home": [], "work": []}
+    client = TestClient(create_app())
+
+    response = client.get(
+        "/api/v1/caldav/events",
+        params={
+            "start": "2026-08-03T00:00:00+00:00",
+            "end": "2026-08-04T00:00:00+00:00",
+            "refresh": "true",
+        },
+    )
+
+    assert response.status_code == 200
+    assert [(call[0], call[3]) for call in fake_caldav_reader.calls] == [
+        ("home", True),
+        ("work", True),
+    ]
+
+
+def test_caldav_events_forwards_configured_timeout_and_cache(
+    fake_caldav_reader, tmp_path, monkeypatch
+) -> None:
+    _write_caldav_config(tmp_path, monkeypatch, timeout=13, cache=77)
+    fake_caldav_reader.behavior = {"home": [], "work": []}
+    client = TestClient(create_app())
+
+    response = client.get(
+        "/api/v1/caldav/events",
+        params={"start": "2026-08-03T00:00:00+00:00", "end": "2026-08-04T00:00:00+00:00"},
+    )
+
+    assert response.status_code == 200
+    assert fake_caldav_reader.init_kwargs == [
+        {
+            "calendar_ids": ["home", "work"],
+            "timeout_seconds": 13,
+            "cache_seconds": 77,
+        }
+    ]
+
+
+@pytest.mark.parametrize("method", ["post", "patch", "delete"])
+def test_caldav_events_rejects_write_methods(
+    tmp_path, monkeypatch, fake_caldav_reader, method
+) -> None:
+    _write_caldav_config(tmp_path, monkeypatch)
+    client = TestClient(create_app())
+
+    response = getattr(client, method)("/api/v1/caldav/events")
+
+    assert response.status_code == 405

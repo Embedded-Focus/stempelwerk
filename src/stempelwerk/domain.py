@@ -78,6 +78,10 @@ class ClockSplitRequest(BaseModel):
     expected_revision: str
 
 
+class ClockAppendRequest(BaseModel):
+    expected_revision: str
+
+
 class ClockSplitResponse(BaseModel):
     clocks: list[ClockEntry]
 

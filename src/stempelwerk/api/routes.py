@@ -14,6 +14,7 @@ from stempelwerk.domain import (
     CalDAVEvent,
     CalDAVEventsResponse,
     CalendarSource,
+    ClockAppendRequest,
     ClockEntriesResponse,
     ClockEntry,
     ClockSplitRequest,
@@ -286,6 +287,46 @@ def update_clock(clock_id: str, payload: ClockUpdateRequest) -> ClockEntry:
     else:
         logger.info("Updated clock %s, new id %s", clock_id, updated.id)
     return updated
+
+
+_APPEND_DURATION_MINUTES = 30
+
+
+@router.post("/clocks/{clock_id}/append", response_model=ClockEntry)
+def append_clock(clock_id: str, payload: ClockAppendRequest) -> ClockEntry:
+    config = load_config()
+    _ensure_writable(config, f"append after clock {clock_id}")
+
+    reader = OrgReader(config.files, config.timezone)
+    writer = OrgWriter()
+    try:
+        appended = writer.append_clock(
+            reader,
+            clock_id,
+            expected_revision=payload.expected_revision,
+            duration_minutes=_APPEND_DURATION_MINUTES,
+        )
+    except ClockNotFoundError as error:
+        logger.warning(
+            "Rejected append after clock %s: no clock with that id exists in the current file",
+            clock_id,
+        )
+        raise HTTPException(status_code=404, detail={"code": "unknown_clock_id"}) from error
+    except RevisionConflictError as error:
+        logger.warning(
+            "Rejected append after clock %s: expected revision %s but file is now at %s "
+            "(the underlying Org file changed since it was loaded)",
+            clock_id,
+            error.expected_revision,
+            error.actual_revision,
+        )
+        raise HTTPException(status_code=409, detail={"code": "revision_conflict"}) from error
+    except FileNotFoundError as error:
+        logger.warning("Rejected append after clock %s: %s", clock_id, error)
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    logger.info("Appended clock %s after %s", appended.id, clock_id)
+    return appended
 
 
 @router.post("/clocks/{clock_id}/split", response_model=ClockSplitResponse)

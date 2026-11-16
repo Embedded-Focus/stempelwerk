@@ -22,6 +22,8 @@ export interface EntryDialogValues {
   headingId: string | null;
   start: Date;
   end: Date;
+  /** The split time, or null when "Split…" is not active. */
+  splitAt: Date | null;
 }
 
 /** Format a Date as "YYYY-MM-DDTHH:MM" in the browser's local time zone. */
@@ -42,6 +44,11 @@ function fromLocalInputValue(value: string): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+/** Truncate a Date to the whole minute. */
+function toWholeMinute(date: Date): Date {
+  return new Date(Math.floor(date.getTime() / 60000) * 60000);
+}
+
 /** Format minutes as Org does, for example 75 -> "1:15". */
 function formatDuration(totalMinutes: number): string {
   const hours = Math.floor(totalMinutes / 60);
@@ -50,9 +57,14 @@ function formatDuration(totalMinutes: number): string {
 }
 
 export function openEntryDialog(options: EntryDialogOptions): void {
-  let mode: "none" | "rename" | "reassign" = "none";
+  let mode: "none" | "rename" | "reassign" | "split" = "none";
   let targetHeadingId: string | null = null;
   let treeLoaded = false;
+  /** Start and end input values saved while split mode resets them. */
+  let savedTimeInputs: { start: string; end: string } | null = null;
+  /** Truncated to the minute; the entry must span at least two minutes to split. */
+  const entryDurationMinutes = Math.round((options.end.getTime() - options.start.getTime()) / 60000);
+  const canSplit = options.timesEditable && entryDurationMinutes >= 2;
 
   const dialog = document.createElement("dialog");
   dialog.className = "clock-dialog";
@@ -81,7 +93,12 @@ export function openEntryDialog(options: EntryDialogOptions): void {
   reassignButton.className = "clock-dialog-button";
   reassignButton.textContent = "Change heading…";
   reassignButton.setAttribute("aria-pressed", "false");
-  actions.append(renameButton, reassignButton);
+  const splitButton = document.createElement("button");
+  splitButton.type = "button";
+  splitButton.className = "clock-dialog-button";
+  splitButton.textContent = "Split…";
+  splitButton.setAttribute("aria-pressed", "false");
+  actions.append(renameButton, reassignButton, splitButton);
 
   const renamePanel = document.createElement("div");
   renamePanel.hidden = true;
@@ -112,6 +129,28 @@ export function openEntryDialog(options: EntryDialogOptions): void {
   reassignNote.textContent =
     "Moves only this entry to the selected heading. No heading is renamed.";
   reassignPanel.append(targetText, treeContainer, reassignNote);
+
+  const splitPanel = document.createElement("div");
+  splitPanel.hidden = true;
+  const splitLabel = document.createElement("label");
+  splitLabel.className = "clock-dialog-label";
+  const splitLabelText = document.createElement("span");
+  splitLabelText.textContent = "Split at";
+  const splitInput = document.createElement("input");
+  splitInput.type = "datetime-local";
+  splitInput.step = "60";
+  splitInput.name = "split_at";
+  splitInput.required = true;
+  splitInput.className = "clock-dialog-input";
+  splitLabel.append(splitLabelText, splitInput);
+  const splitPreview = document.createElement("p");
+  splitPreview.className = "clock-dialog-duration";
+  splitPreview.setAttribute("aria-live", "polite");
+  const splitNote = document.createElement("p");
+  splitNote.className = "clock-dialog-note";
+  splitNote.textContent =
+    "Splits this entry into two entries in the same heading. The first entry ends at the split time, the second starts there.";
+  splitPanel.append(splitLabel, splitPreview, splitNote);
 
   const form = document.createElement("form");
   form.className = "clock-dialog-form";
@@ -150,6 +189,9 @@ export function openEntryDialog(options: EntryDialogOptions): void {
     endInput.disabled = true;
     reassignButton.disabled = true;
   }
+  if (!canSplit) {
+    splitButton.disabled = true;
+  }
 
   times.append(startLabel, endLabel);
 
@@ -177,19 +219,22 @@ export function openEntryDialog(options: EntryDialogOptions): void {
   saveButton.textContent = "Save";
   buttonRow.append(cancelButton, saveButton);
 
-  form.append(titleText, actions, renamePanel, reassignPanel, times, duration, note, errorArea, buttonRow);
+  form.append(titleText, actions, renamePanel, reassignPanel, splitPanel, times, duration, note, errorArea, buttonRow);
   dialog.append(heading, source, form);
   document.body.append(dialog);
 
-  const setMode = (next: "none" | "rename" | "reassign"): void => {
+  const setMode = (next: "none" | "rename" | "reassign" | "split"): void => {
     mode = next;
     dialog.classList.toggle("clock-dialog-wide", mode === "reassign");
     renamePanel.hidden = mode !== "rename";
     reassignPanel.hidden = mode !== "reassign";
+    splitPanel.hidden = mode !== "split";
     renameButton.setAttribute("aria-pressed", mode === "rename" ? "true" : "false");
     reassignButton.setAttribute("aria-pressed", mode === "reassign" ? "true" : "false");
-    renameButton.disabled = mode === "reassign";
-    reassignButton.disabled = mode === "rename" || !options.timesEditable;
+    splitButton.setAttribute("aria-pressed", mode === "split" ? "true" : "false");
+    renameButton.disabled = mode === "reassign" || mode === "split";
+    reassignButton.disabled = mode === "rename" || mode === "split" || !options.timesEditable;
+    splitButton.disabled = mode === "rename" || mode === "reassign" || !canSplit;
   };
 
   renameButton.addEventListener("click", () => {
@@ -212,6 +257,17 @@ export function openEntryDialog(options: EntryDialogOptions): void {
     }
     setMode("reassign");
     void loadTree();
+  });
+
+  splitButton.addEventListener("click", () => {
+    if (mode === "split") {
+      setMode("none");
+      leaveSplitMode();
+      return;
+    }
+    setMode("split");
+    enterSplitMode();
+    splitInput.focus();
   });
 
   const loadTree = async (): Promise<void> => {
@@ -280,6 +336,59 @@ export function openEntryDialog(options: EntryDialogOptions): void {
   endInput.addEventListener("input", updateDuration);
   updateDuration();
 
+  const updateSplitPreview = (): void => {
+    const split = fromLocalInputValue(splitInput.value);
+    if (split === null) {
+      splitPreview.textContent = "Enter a split time";
+      saveButton.disabled = true;
+      return;
+    }
+    const splitMinute = toWholeMinute(split);
+    if (
+      splitMinute.getTime() <= options.start.getTime() ||
+      splitMinute.getTime() >= options.end.getTime()
+    ) {
+      splitPreview.textContent = "The split time must be between start and end";
+      saveButton.disabled = true;
+      return;
+    }
+    const firstMinutes = Math.round((splitMinute.getTime() - options.start.getTime()) / 60000);
+    const secondMinutes = Math.round((options.end.getTime() - splitMinute.getTime()) / 60000);
+    splitPreview.textContent = `First: ${formatDuration(firstMinutes)}, second: ${formatDuration(
+      secondMinutes
+    )}`;
+    saveButton.disabled = false;
+  };
+
+  splitInput.addEventListener("input", updateSplitPreview);
+
+  const enterSplitMode = (): void => {
+    savedTimeInputs = { start: startInput.value, end: endInput.value };
+    startInput.value = toLocalInputValue(options.start);
+    endInput.value = toLocalInputValue(options.end);
+    startInput.disabled = true;
+    endInput.disabled = true;
+    splitInput.min = toLocalInputValue(options.start);
+    splitInput.max = toLocalInputValue(options.end);
+    splitInput.value = toLocalInputValue(
+      toWholeMinute(new Date((options.start.getTime() + options.end.getTime()) / 2))
+    );
+    updateDuration();
+    updateSplitPreview();
+  };
+
+  const leaveSplitMode = (): void => {
+    if (savedTimeInputs !== null) {
+      startInput.value = savedTimeInputs.start;
+      endInput.value = savedTimeInputs.end;
+      savedTimeInputs = null;
+    }
+    startInput.disabled = !options.timesEditable;
+    endInput.disabled = !options.timesEditable;
+    splitPreview.textContent = "";
+    updateDuration();
+  };
+
   dialog.showModal();
 
   async function handleSave(): Promise<void> {
@@ -297,6 +406,23 @@ export function openEntryDialog(options: EntryDialogOptions): void {
       errorArea.textContent = "Select a heading";
       return;
     }
+    let splitAt: Date | null = null;
+    if (mode === "split") {
+      const split = fromLocalInputValue(splitInput.value);
+      if (split === null) {
+        errorArea.textContent = "Enter a split time";
+        return;
+      }
+      const splitMinute = toWholeMinute(split);
+      if (
+        splitMinute.getTime() <= start.getTime() ||
+        splitMinute.getTime() >= end.getTime()
+      ) {
+        errorArea.textContent = "The split time must be between start and end";
+        return;
+      }
+      splitAt = splitMinute;
+    }
 
     cancelButton.disabled = true;
     saveButton.disabled = true;
@@ -306,7 +432,8 @@ export function openEntryDialog(options: EntryDialogOptions): void {
         title: mode === "rename" ? input.value : null,
         headingId: mode === "reassign" ? targetHeadingId : null,
         start,
-        end
+        end,
+        splitAt
       });
       dialog.close();
     } catch (error: unknown) {

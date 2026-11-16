@@ -18,6 +18,7 @@ import {
   listClocks,
   listHeadings,
   renameHeading,
+  splitClock,
   updateClock,
   type CalendarSource,
   type ClockEntry,
@@ -359,7 +360,40 @@ const handleEventOpen = (event: EventApi): void => {
     end: event.end,
     timesEditable: editable !== false,
     loadHeadings: listHeadings,
-    onSave: async ({ title, headingId: targetHeadingId, start, end }: EntryDialogValues) => {
+    onSave: async ({ title, headingId: targetHeadingId, start, end, splitAt }: EntryDialogValues) => {
+      if (splitAt !== null) {
+        try {
+          await splitClock({
+            id: clockId,
+            splitAt: splitAt.toISOString(),
+            expectedRevision: revisionState
+          });
+          statusLine.textContent = "Entry split";
+          calendar.refetchEvents();
+        } catch (error: unknown) {
+          if (error instanceof ClockUpdateError && error.status === 409) {
+            statusLine.textContent = "Org file changed on disk - reloading calendar";
+            calendar.refetchEvents();
+            return;
+          }
+          if (error instanceof ClockUpdateError && error.status === 404) {
+            statusLine.textContent = "This entry no longer exists - reloading calendar";
+            calendar.refetchEvents();
+            return;
+          }
+          if (
+            error instanceof ClockUpdateError &&
+            error.status === 422 &&
+            error.code === "invalid_time_range"
+          ) {
+            throw new Error("The split time must be between the start and the end of the entry.");
+          }
+          console.error(error);
+          throw new Error("Could not split the entry");
+        }
+        return;
+      }
+
       const timesChanged =
         start.getTime() !== savedStart.getTime() || end.getTime() !== savedEnd.getTime();
 

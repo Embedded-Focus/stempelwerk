@@ -1380,6 +1380,136 @@ def test_post_clock_split_rejects_when_emacs_write_mode(tmp_path: Path, monkeypa
     assert response.json()["detail"]["code"] == "emacs_not_supported"
 
 
+def test_post_clock_append_writes_new_line_and_returns_entry(tmp_path: Path, monkeypatch) -> None:
+    org_file = _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Client Work :billable:\n"
+        "** Implementation\n"
+        "  CLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:45] =>  1:45\n"
+        "** Review\n"
+        "CLOCK: [2026-07-31 Fri 11:00]--[2026-07-31 Fri 11:30] =>  0:30\n",
+    )
+    client = TestClient(create_app())
+    window = {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+
+    before = client.get("/api/v1/clocks", params=window).json()
+    implementation = next(c for c in before["clocks"] if c["heading_title"] == "Implementation")
+
+    response = client.post(
+        f"/api/v1/clocks/{implementation['id']}/append",
+        json={"expected_revision": implementation["revision"]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["start"] == "2026-07-31T10:45:00+02:00"
+    assert body["end"] == "2026-07-31T11:15:00+02:00"
+    assert body["duration_minutes"] == 30
+    assert body["heading_id"] == implementation["heading_id"]
+    assert body["id"] != implementation["id"]
+    assert body["revision"] != implementation["revision"]
+
+    assert org_file.read_text(encoding="utf-8") == (
+        "* Client Work :billable:\n"
+        "** Implementation\n"
+        "  CLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:45] =>  1:45\n"
+        "  CLOCK: [2026-07-31 Fri 10:45]--[2026-07-31 Fri 11:15] =>  0:30\n"
+        "** Review\n"
+        "CLOCK: [2026-07-31 Fri 11:00]--[2026-07-31 Fri 11:30] =>  0:30\n"
+    )
+
+    after = client.get("/api/v1/clocks", params=window).json()
+    implementation_entries = [c for c in after["clocks"] if c["heading_title"] == "Implementation"]
+    assert [(c["id"], c["duration_minutes"]) for c in implementation_entries] == [
+        (implementation["id"], 105),
+        (body["id"], 30),
+    ]
+
+
+def test_post_clock_append_rejects_stale_revision(tmp_path: Path, monkeypatch) -> None:
+    org_file = _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+    )
+    client = TestClient(create_app())
+    window = {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+    clock = client.get("/api/v1/clocks", params=window).json()["clocks"][0]
+
+    org_file.write_text(
+        "* Work :urgent:\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+        encoding="utf-8",
+    )
+
+    response = client.post(
+        f"/api/v1/clocks/{clock['id']}/append",
+        json={"expected_revision": clock["revision"]},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "revision_conflict"
+
+
+def test_post_clock_append_unknown_id_returns_404(tmp_path: Path, monkeypatch) -> None:
+    org_file = _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+    )
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/api/v1/clocks/clock:work:doesnotexist/append",
+        json={"expected_revision": revision_for_file(org_file)},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "unknown_clock_id"
+
+
+def test_post_clock_append_rejects_when_read_only(tmp_path: Path, monkeypatch, caplog) -> None:
+    _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+        write_mode="read-only",
+    )
+    client = TestClient(create_app())
+    window = {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+    clock = client.get("/api/v1/clocks", params=window).json()["clocks"][0]
+
+    with caplog.at_level("WARNING", logger="stempelwerk.api.routes"):
+        response = client.post(
+            f"/api/v1/clocks/{clock['id']}/append",
+            json={"expected_revision": clock["revision"]},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "read_only"
+    assert any("read-only" in record.message for record in caplog.records)
+
+
+def test_post_clock_append_rejects_when_emacs_write_mode(tmp_path: Path, monkeypatch) -> None:
+    _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+        write_mode="emacs",
+    )
+    client = TestClient(create_app())
+    window = {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+    clock = client.get("/api/v1/clocks", params=window).json()["clocks"][0]
+
+    response = client.post(
+        f"/api/v1/clocks/{clock['id']}/append",
+        json={"expected_revision": clock["revision"]},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "emacs_not_supported"
+
+
 # --- CalDAV events endpoint ---
 
 

@@ -18,6 +18,7 @@ import {
   listClocks,
   listHeadings,
   renameHeading,
+  appendClock,
   splitClock,
   updateClock,
   type CalendarSource,
@@ -360,6 +361,30 @@ const handleEventOpen = (event: EventApi): void => {
     end: event.end,
     timesEditable: editable !== false,
     loadHeadings: listHeadings,
+    onAppend: async () => {
+      try {
+        const appended: ClockEntry = await appendClock({
+          id: clockId,
+          expectedRevision: revisionState
+        });
+        revisionState = appended.revision;
+        statusLine.textContent = "Entry appended";
+        calendar.refetchEvents();
+      } catch (error: unknown) {
+        if (error instanceof ClockUpdateError && error.status === 409) {
+          statusLine.textContent = "Org file changed on disk - reloading calendar";
+          calendar.refetchEvents();
+          return;
+        }
+        if (error instanceof ClockUpdateError && error.status === 404) {
+          statusLine.textContent = "This entry no longer exists - reloading calendar";
+          calendar.refetchEvents();
+          return;
+        }
+        console.error(error);
+        throw new Error("Could not append an entry");
+      }
+    },
     onSave: async ({ title, headingId: targetHeadingId, start, end, splitAt }: EntryDialogValues) => {
       if (splitAt !== null) {
         try {

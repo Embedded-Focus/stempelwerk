@@ -13,6 +13,8 @@ export interface EntryDialogOptions {
   loadHeadings: () => Promise<Heading[]>;
   /** Called with the new values. Resolve to close the dialog; throw to keep it open. */
   onSave: (values: EntryDialogValues) => Promise<void>;
+  /** Appends a fixed-length entry after this one. Resolve to close; throw to keep it open. */
+  onAppend: () => Promise<void>;
 }
 
 export interface EntryDialogValues {
@@ -98,7 +100,11 @@ export function openEntryDialog(options: EntryDialogOptions): void {
   splitButton.className = "clock-dialog-button";
   splitButton.textContent = "Split…";
   splitButton.setAttribute("aria-pressed", "false");
-  actions.append(renameButton, reassignButton, splitButton);
+  const appendButton = document.createElement("button");
+  appendButton.type = "button";
+  appendButton.className = "clock-dialog-button";
+  appendButton.textContent = "Append 30 min";
+  actions.append(renameButton, reassignButton, splitButton, appendButton);
 
   const renamePanel = document.createElement("div");
   renamePanel.hidden = true;
@@ -192,6 +198,9 @@ export function openEntryDialog(options: EntryDialogOptions): void {
   if (!canSplit) {
     splitButton.disabled = true;
   }
+  if (!options.timesEditable) {
+    appendButton.disabled = true;
+  }
 
   times.append(startLabel, endLabel);
 
@@ -235,6 +244,7 @@ export function openEntryDialog(options: EntryDialogOptions): void {
     renameButton.disabled = mode === "reassign" || mode === "split";
     reassignButton.disabled = mode === "rename" || mode === "split" || !options.timesEditable;
     splitButton.disabled = mode === "rename" || mode === "reassign" || !canSplit;
+    appendButton.disabled = mode !== "none" || !options.timesEditable;
   };
 
   renameButton.addEventListener("click", () => {
@@ -269,6 +279,32 @@ export function openEntryDialog(options: EntryDialogOptions): void {
     enterSplitMode();
     splitInput.focus();
   });
+
+  appendButton.addEventListener("click", () => {
+    void handleAppend();
+  });
+
+  const setActionButtonsDisabled = (disabled: boolean): void => {
+    renameButton.disabled = disabled;
+    reassignButton.disabled = disabled;
+    splitButton.disabled = disabled;
+    appendButton.disabled = disabled;
+    cancelButton.disabled = disabled;
+    saveButton.disabled = disabled;
+  };
+
+  async function handleAppend(): Promise<void> {
+    setActionButtonsDisabled(true);
+    errorArea.textContent = "";
+    try {
+      await options.onAppend();
+      dialog.close();
+    } catch (error: unknown) {
+      errorArea.textContent =
+        error instanceof Error ? error.message : "Could not append an entry";
+      setActionButtonsDisabled(false);
+    }
+  }
 
   const loadTree = async (): Promise<void> => {
     if (treeLoaded) {

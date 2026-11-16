@@ -609,6 +609,274 @@ def test_split_clock_creates_no_backup(tmp_path: Path) -> None:
     assert list(tmp_path.glob("work.org.bak.*")) == []
 
 
+def test_append_clock_inserts_thirty_minute_line_after_anchor(tmp_path: Path) -> None:
+    reader, org_file = _reader(
+        tmp_path,
+        "* Work\n"
+        ":LOGBOOK:\n"
+        "CLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:45] =>  1:45\n"
+        ":END:\n",
+    )
+    clock = reader.list_clocks(
+        start=datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+    )[0][0]
+
+    appended = OrgWriter().append_clock(
+        reader,
+        clock.id,
+        expected_revision=clock.revision,
+        duration_minutes=30,
+    )
+
+    assert appended.start == datetime(2026, 7, 31, 10, 45, tzinfo=ZoneInfo("Europe/Vienna"))
+    assert appended.end == datetime(2026, 7, 31, 11, 15, tzinfo=ZoneInfo("Europe/Vienna"))
+    assert appended.duration_minutes == 30
+    assert appended.heading_id == clock.heading_id
+    assert appended.id != clock.id
+
+    assert org_file.read_text(encoding="utf-8") == (
+        "* Work\n"
+        ":LOGBOOK:\n"
+        "CLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:45] =>  1:45\n"
+        "CLOCK: [2026-07-31 Fri 10:45]--[2026-07-31 Fri 11:15] =>  0:30\n"
+        ":END:\n"
+    )
+
+
+def test_append_clock_keeps_anchor_id_resolvable(tmp_path: Path) -> None:
+    reader, _org_file = _reader(
+        tmp_path,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+    )
+    clock = reader.list_clocks(
+        start=datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+    )[0][0]
+
+    OrgWriter().append_clock(
+        reader,
+        clock.id,
+        expected_revision=clock.revision,
+        duration_minutes=30,
+    )
+
+    assert reader.find_clock(clock.id) is not None
+
+
+def test_append_clock_preserves_indentation_on_bare_line(tmp_path: Path) -> None:
+    reader, org_file = _reader(
+        tmp_path,
+        "* Acme\n"
+        "** Development\n"
+        "  CLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n"
+        "** Support\n"
+        "CLOCK: [2026-07-31 Fri 13:00]--[2026-07-31 Fri 13:45] =>  0:45\n",
+    )
+    clocks = reader.list_clocks(
+        start=datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+    )[0]
+    development = next(c for c in clocks if c.heading_title == "Development")
+    support = next(c for c in clocks if c.heading_title == "Support")
+
+    OrgWriter().append_clock(
+        reader,
+        development.id,
+        expected_revision=development.revision,
+        duration_minutes=30,
+    )
+
+    assert org_file.read_text(encoding="utf-8") == (
+        "* Acme\n"
+        "** Development\n"
+        "  CLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n"
+        "  CLOCK: [2026-07-31 Fri 10:00]--[2026-07-31 Fri 10:30] =>  0:30\n"
+        "** Support\n"
+        "CLOCK: [2026-07-31 Fri 13:00]--[2026-07-31 Fri 13:45] =>  0:45\n"
+    )
+    # The Support entry keeps its times; its id changes because the line
+    # number shifted, which is why the frontend refetches after an append.
+    clocks_after = reader.list_clocks(
+        start=datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+    )[0]
+    support_after = next(c for c in clocks_after if c.heading_title == "Support")
+    assert support_after.start == support.start
+    assert support_after.end == support.end
+    assert support_after.id != support.id
+
+
+def test_append_clock_uses_crlf_line_breaks(tmp_path: Path) -> None:
+    reader, org_file = _reader(
+        tmp_path,
+        "* Work\r\n"
+        ":LOGBOOK:\r\n"
+        "CLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\r\n"
+        ":END:\r\n",
+    )
+    clock = reader.list_clocks(
+        start=datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+    )[0][0]
+
+    OrgWriter().append_clock(
+        reader,
+        clock.id,
+        expected_revision=clock.revision,
+        duration_minutes=30,
+    )
+
+    assert org_file.read_bytes() == (
+        b"* Work\r\n"
+        b":LOGBOOK:\r\n"
+        b"CLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\r\n"
+        b"CLOCK: [2026-07-31 Fri 10:00]--[2026-07-31 Fri 10:30] =>  0:30\r\n"
+        b":END:\r\n"
+    )
+
+
+def test_append_clock_adds_missing_final_line_break(tmp_path: Path) -> None:
+    reader, org_file = _reader(
+        tmp_path,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00",
+    )
+    clock = reader.list_clocks(
+        start=datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+    )[0][0]
+
+    OrgWriter().append_clock(
+        reader,
+        clock.id,
+        expected_revision=clock.revision,
+        duration_minutes=30,
+    )
+
+    content = org_file.read_text(encoding="utf-8")
+    assert content == (
+        "* Work\n"
+        "CLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n"
+        "CLOCK: [2026-07-31 Fri 10:00]--[2026-07-31 Fri 10:30] =>  0:30\n"
+    )
+    assert all(line.endswith("\n") for line in content.splitlines(keepends=True))
+
+
+def test_append_clock_keeps_drawer_intact(tmp_path: Path) -> None:
+    reader, org_file = _reader(
+        tmp_path,
+        "* Work\n"
+        ":LOGBOOK:\n"
+        "CLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n"
+        "CLOCK: [2026-07-31 Fri 13:00]--[2026-07-31 Fri 14:00] =>  1:00\n"
+        ":END:\n",
+    )
+    clocks = reader.list_clocks(
+        start=datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+    )[0]
+    first = next(c for c in clocks if c.start.hour == 9)
+
+    OrgWriter().append_clock(
+        reader,
+        first.id,
+        expected_revision=first.revision,
+        duration_minutes=30,
+    )
+
+    assert org_file.read_text(encoding="utf-8") == (
+        "* Work\n"
+        ":LOGBOOK:\n"
+        "CLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n"
+        "CLOCK: [2026-07-31 Fri 10:00]--[2026-07-31 Fri 10:30] =>  0:30\n"
+        "CLOCK: [2026-07-31 Fri 13:00]--[2026-07-31 Fri 14:00] =>  1:00\n"
+        ":END:\n"
+    )
+
+
+def test_append_clock_rejects_stale_revision(tmp_path: Path) -> None:
+    reader, org_file = _reader(
+        tmp_path,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+    )
+    clock = reader.list_clocks(
+        start=datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+    )[0][0]
+    before = org_file.read_bytes()
+
+    with pytest.raises(RevisionConflictError):
+        OrgWriter().append_clock(
+            reader,
+            clock.id,
+            expected_revision="sha256:stale",
+            duration_minutes=30,
+        )
+
+    assert org_file.read_bytes() == before
+
+
+def test_append_clock_unknown_clock_raises_and_writes_nothing(tmp_path: Path) -> None:
+    reader, org_file = _reader(
+        tmp_path,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+    )
+    before = org_file.read_bytes()
+
+    with pytest.raises(ClockNotFoundError):
+        OrgWriter().append_clock(
+            reader,
+            "clock:work:missing",
+            expected_revision=revision_for_file(org_file),
+            duration_minutes=30,
+        )
+
+    assert org_file.read_bytes() == before
+
+
+@pytest.mark.parametrize("duration_minutes", [0, -30])
+def test_append_clock_rejects_non_positive_duration(tmp_path: Path, duration_minutes: int) -> None:
+    reader, org_file = _reader(
+        tmp_path,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+    )
+    clock = reader.list_clocks(
+        start=datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+    )[0][0]
+    before = org_file.read_bytes()
+
+    with pytest.raises(ValueError):
+        OrgWriter().append_clock(
+            reader,
+            clock.id,
+            expected_revision=clock.revision,
+            duration_minutes=duration_minutes,
+        )
+
+    assert org_file.read_bytes() == before
+
+
+def test_append_clock_creates_no_backup(tmp_path: Path) -> None:
+    reader, _org_file = _reader(
+        tmp_path,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+    )
+    clock = reader.list_clocks(
+        start=datetime(2026, 7, 31, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+        end=datetime(2026, 8, 1, 0, 0, tzinfo=ZoneInfo("Europe/Vienna")),
+    )[0][0]
+
+    OrgWriter().append_clock(
+        reader,
+        clock.id,
+        expected_revision=clock.revision,
+        duration_minutes=30,
+    )
+
+    assert list(tmp_path.glob("work.org.bak.*")) == []
+
+
 def test_move_clock_into_existing_drawer_inserts_first(tmp_path: Path) -> None:
     reader, org_file = _reader(
         tmp_path,

@@ -1172,6 +1172,214 @@ def test_patch_clock_move_rejects_when_read_only(tmp_path: Path, monkeypatch, ca
     assert any("read-only" in record.message for record in caplog.records)
 
 
+def test_post_clock_split_writes_two_lines_and_returns_both_entries(
+    tmp_path: Path, monkeypatch
+) -> None:
+    org_file = _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Client Work :billable:\n"
+        "** Implementation\n"
+        "  CLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:45] =>  1:45\n"
+        "** Review\n"
+        "CLOCK: [2026-07-31 Fri 11:00]--[2026-07-31 Fri 11:30] =>  0:30\n",
+    )
+    client = TestClient(create_app())
+    window = {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+
+    before = client.get("/api/v1/clocks", params=window).json()
+    implementation = next(c for c in before["clocks"] if c["heading_title"] == "Implementation")
+
+    response = client.post(
+        f"/api/v1/clocks/{implementation['id']}/split",
+        json={
+            "split_at": "2026-07-31T09:30:00+02:00",
+            "expected_revision": implementation["revision"],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    first, second = body["clocks"]
+    assert first["start"] == "2026-07-31T09:00:00+02:00"
+    assert first["end"] == "2026-07-31T09:30:00+02:00"
+    assert first["duration_minutes"] == 30
+    assert second["start"] == "2026-07-31T09:30:00+02:00"
+    assert second["end"] == "2026-07-31T10:45:00+02:00"
+    assert second["duration_minutes"] == 75
+    assert first["heading_id"] == second["heading_id"] == implementation["heading_id"]
+    assert first["id"] != second["id"] != implementation["id"]
+    assert first["revision"] == second["revision"]
+    assert first["revision"] != implementation["revision"]
+
+    assert org_file.read_text(encoding="utf-8") == (
+        "* Client Work :billable:\n"
+        "** Implementation\n"
+        "  CLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 09:30] =>  0:30\n"
+        "  CLOCK: [2026-07-31 Fri 09:30]--[2026-07-31 Fri 10:45] =>  1:15\n"
+        "** Review\n"
+        "CLOCK: [2026-07-31 Fri 11:00]--[2026-07-31 Fri 11:30] =>  0:30\n"
+    )
+
+    after = client.get("/api/v1/clocks", params=window).json()
+    split_entries = [c for c in after["clocks"] if c["heading_title"] == "Implementation"]
+    assert [(c["id"], c["duration_minutes"]) for c in split_entries] == [
+        (first["id"], 30),
+        (second["id"], 75),
+    ]
+    review = next(c for c in after["clocks"] if c["heading_title"] == "Review")
+    assert review["start"] == "2026-07-31T11:00:00+02:00"
+
+
+def test_post_clock_split_ignores_seconds(tmp_path: Path, monkeypatch) -> None:
+    _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+    )
+    client = TestClient(create_app())
+    window = {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+    clock = client.get("/api/v1/clocks", params=window).json()["clocks"][0]
+
+    response = client.post(
+        f"/api/v1/clocks/{clock['id']}/split",
+        json={
+            "split_at": "2026-07-31T09:29:59+02:00",
+            "expected_revision": clock["revision"],
+        },
+    )
+
+    assert response.status_code == 200
+    first, second = response.json()["clocks"]
+    assert first["end"] == "2026-07-31T09:29:00+02:00"
+    assert second["start"] == "2026-07-31T09:29:00+02:00"
+
+
+@pytest.mark.parametrize(
+    "split_at",
+    [
+        "2026-07-31T09:00:00+02:00",
+        "2026-07-31T10:00:00+02:00",
+        "2026-07-31T08:30:00+02:00",
+        "2026-07-31T10:30:00+02:00",
+    ],
+)
+def test_post_clock_split_outside_the_entry_returns_422(
+    tmp_path: Path, monkeypatch, split_at: str
+) -> None:
+    _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+    )
+    client = TestClient(create_app())
+    window = {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+    clock = client.get("/api/v1/clocks", params=window).json()["clocks"][0]
+
+    response = client.post(
+        f"/api/v1/clocks/{clock['id']}/split",
+        json={"split_at": split_at, "expected_revision": clock["revision"]},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "invalid_time_range"
+
+
+def test_post_clock_split_rejects_stale_revision(tmp_path: Path, monkeypatch) -> None:
+    org_file = _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+    )
+    client = TestClient(create_app())
+    window = {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+    clock = client.get("/api/v1/clocks", params=window).json()["clocks"][0]
+
+    org_file.write_text(
+        "* Work :urgent:\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+        encoding="utf-8",
+    )
+
+    response = client.post(
+        f"/api/v1/clocks/{clock['id']}/split",
+        json={
+            "split_at": "2026-07-31T09:30:00+02:00",
+            "expected_revision": clock["revision"],
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "revision_conflict"
+
+
+def test_post_clock_split_unknown_id_returns_404(tmp_path: Path, monkeypatch) -> None:
+    org_file = _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+    )
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/api/v1/clocks/clock:work:doesnotexist/split",
+        json={
+            "split_at": "2026-07-31T09:30:00+02:00",
+            "expected_revision": revision_for_file(org_file),
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "unknown_clock_id"
+
+
+def test_post_clock_split_rejects_when_read_only(tmp_path: Path, monkeypatch, caplog) -> None:
+    _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+        write_mode="read-only",
+    )
+    client = TestClient(create_app())
+    window = {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+    clock = client.get("/api/v1/clocks", params=window).json()["clocks"][0]
+
+    with caplog.at_level("WARNING", logger="stempelwerk.api.routes"):
+        response = client.post(
+            f"/api/v1/clocks/{clock['id']}/split",
+            json={
+                "split_at": "2026-07-31T09:30:00+02:00",
+                "expected_revision": clock["revision"],
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "read_only"
+    assert any("read-only" in record.message for record in caplog.records)
+
+
+def test_post_clock_split_rejects_when_emacs_write_mode(tmp_path: Path, monkeypatch) -> None:
+    _configure_work_file(
+        tmp_path,
+        monkeypatch,
+        "* Work\nCLOCK: [2026-07-31 Fri 09:00]--[2026-07-31 Fri 10:00] =>  1:00\n",
+        write_mode="emacs",
+    )
+    client = TestClient(create_app())
+    window = {"start": "2026-07-31T00:00:00+02:00", "end": "2026-08-01T00:00:00+02:00"}
+    clock = client.get("/api/v1/clocks", params=window).json()["clocks"][0]
+
+    response = client.post(
+        f"/api/v1/clocks/{clock['id']}/split",
+        json={
+            "split_at": "2026-07-31T09:30:00+02:00",
+            "expected_revision": clock["revision"],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "emacs_not_supported"
+
+
 # --- CalDAV events endpoint ---
 
 

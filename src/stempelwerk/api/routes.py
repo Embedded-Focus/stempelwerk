@@ -16,6 +16,8 @@ from stempelwerk.domain import (
     CalendarSource,
     ClockEntriesResponse,
     ClockEntry,
+    ClockSplitRequest,
+    ClockSplitResponse,
     ClockUpdateRequest,
     Heading,
     HeadingRenameRequest,
@@ -26,6 +28,7 @@ from stempelwerk.org_writer import (
     ClockNotFoundError,
     HeadingNotFoundError,
     InvalidHeadingTitleError,
+    InvalidSplitTimeError,
     OrgWriter,
     RevisionConflictError,
     backup_created_at,
@@ -283,6 +286,52 @@ def update_clock(clock_id: str, payload: ClockUpdateRequest) -> ClockEntry:
     else:
         logger.info("Updated clock %s, new id %s", clock_id, updated.id)
     return updated
+
+
+@router.post("/clocks/{clock_id}/split", response_model=ClockSplitResponse)
+def split_clock(clock_id: str, payload: ClockSplitRequest) -> ClockSplitResponse:
+    split_at = payload.split_at.replace(second=0, microsecond=0)
+    config = load_config()
+    _ensure_writable(config, f"split of clock {clock_id}")
+
+    reader = OrgReader(config.files, config.timezone)
+    writer = OrgWriter()
+    try:
+        first, second = writer.split_clock(
+            reader,
+            clock_id,
+            split_at=split_at,
+            expected_revision=payload.expected_revision,
+        )
+    except ClockNotFoundError as error:
+        logger.warning(
+            "Rejected split of clock %s: no clock with that id exists in the current file",
+            clock_id,
+        )
+        raise HTTPException(status_code=404, detail={"code": "unknown_clock_id"}) from error
+    except InvalidSplitTimeError as error:
+        logger.warning(
+            "Rejected split of clock %s: split time %s is %s",
+            clock_id,
+            payload.split_at,
+            error.reason,
+        )
+        raise HTTPException(status_code=422, detail={"code": "invalid_time_range"}) from error
+    except RevisionConflictError as error:
+        logger.warning(
+            "Rejected split of clock %s: expected revision %s but file is now at %s "
+            "(the underlying Org file changed since it was loaded)",
+            clock_id,
+            error.expected_revision,
+            error.actual_revision,
+        )
+        raise HTTPException(status_code=409, detail={"code": "revision_conflict"}) from error
+    except FileNotFoundError as error:
+        logger.warning("Rejected split of clock %s: %s", clock_id, error)
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    logger.info("Split clock %s into %s and %s", clock_id, first.id, second.id)
+    return ClockSplitResponse(clocks=[first, second])
 
 
 @router.patch("/files/{file_id}/headings/{heading_id}", status_code=204)

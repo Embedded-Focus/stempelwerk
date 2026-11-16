@@ -73,6 +73,15 @@ class ClockUpdateRequest(BaseModel):
     heading_id: str | None = None
 
 
+class ClockSplitRequest(BaseModel):
+    split_at: datetime
+    expected_revision: str
+
+
+class ClockSplitResponse(BaseModel):
+    clocks: list[ClockEntry]
+
+
 class HeadingRenameRequest(BaseModel):
     title: str
     expected_revision: str

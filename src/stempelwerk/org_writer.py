@@ -2,7 +2,7 @@ import os
 import re
 import tempfile
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from stempelwerk.domain import ClockEntry
@@ -223,6 +223,60 @@ class OrgWriter:
         if first is None or second is None:
             raise RuntimeError("Split clocks not found after write")
         return first.entry, second.entry
+
+    def append_clock(
+        self,
+        reader: OrgReader,
+        clock_id: str,
+        expected_revision: str,
+        duration_minutes: int,
+    ) -> ClockEntry:
+        """Insert a new CLOCK line of the given length after the anchor line."""
+
+        if duration_minutes <= 0:
+            raise ValueError("duration_minutes must be positive")
+
+        file_config = reader.resolve_file(clock_id)
+        if file_config is None:
+            raise ClockNotFoundError(clock_id)
+
+        text = _read_at_revision(file_config.path, expected_revision)
+
+        parsed = reader.find_clock(clock_id)
+        if parsed is None:
+            raise ClockNotFoundError(clock_id)
+
+        new_start = parsed.entry.end
+        new_end = new_start + timedelta(minutes=duration_minutes)
+
+        indent = parsed.line[: len(parsed.line) - len(parsed.line.lstrip())]
+        new_text = format_clock_line(indent, new_start, new_end)
+        # parsed.line excludes the line break, so read the break style from
+        # the file text directly. A line without a break is the file's last
+        # line; the edit range ends before the anchor's own break, so the
+        # original break survives the replacement when it exists. When the
+        # anchor lacks a break, add one before the new line and end the new
+        # line with a break too.
+        br = "\r\n" if text[parsed.line_end : parsed.line_end + 2] == "\r\n" else "\n"
+        anchor_has_break = parsed.line_end < len(text)
+        new_part = new_text + br if not anchor_has_break else new_text
+
+        edit = TextEdit(
+            start=parsed.line_start,
+            end=parsed.line_end,
+            replacement=parsed.line + br + new_part,
+        )
+        updated_text = self.replace_clock_line(text, edit)
+
+        _write_atomically(file_config.path, updated_text)
+
+        new_id = _clock_id(
+            parsed.entry.file_id, parsed.entry.heading_id, parsed.line_number + 1, new_text
+        )
+        appended = reader.find_clock(new_id)
+        if appended is None:
+            raise RuntimeError("Appended clock not found after write")
+        return appended.entry
 
     def move_clock(
         self,

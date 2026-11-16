@@ -238,6 +238,22 @@ export async function splitClock(params: {
   return response.json() as Promise<ClockSplitResponse>;
 }
 
+export async function appendClock(params: {
+  id: string;
+  expectedRevision: string;
+}): Promise<ClockEntry> {
+  const response = await fetch(`/api/v1/clocks/${encodeURIComponent(params.id)}/append`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ expected_revision: params.expectedRevision })
+  });
+
+  if (!response.ok) {
+    throw new ClockUpdateError(response.status, await readErrorCode(response));
+  }
+  return response.json() as Promise<ClockEntry>;
+}
+
 export class HeadingRenameError extends Error {
   status: number;
   code: string | null;

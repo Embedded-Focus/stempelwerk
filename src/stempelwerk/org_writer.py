@@ -50,6 +50,12 @@ class InvalidHeadingTitleError(ValueError):
         super().__init__(f"Invalid heading title {title!r}: {reason}")
 
 
+class InvalidSplitTimeError(ValueError):
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(f"Invalid split time: {reason}")
+
+
 class RevisionConflictError(ValueError):
     def __init__(self, expected_revision: str, actual_revision: str) -> None:
         self.expected_revision = expected_revision
@@ -164,6 +170,59 @@ class OrgWriter:
         if updated is None:
             raise RuntimeError(f"Updated clock {new_id} not found after write")
         return updated.entry
+
+    def split_clock(
+        self,
+        reader: OrgReader,
+        clock_id: str,
+        split_at: datetime,
+        expected_revision: str,
+    ) -> tuple[ClockEntry, ClockEntry]:
+        """Replace one CLOCK line with two lines split at *split_at*."""
+
+        file_config = reader.resolve_file(clock_id)
+        if file_config is None:
+            raise ClockNotFoundError(clock_id)
+
+        text = _read_at_revision(file_config.path, expected_revision)
+
+        parsed = reader.find_clock(clock_id)
+        if parsed is None:
+            raise ClockNotFoundError(clock_id)
+
+        local_start = parsed.entry.start
+        local_end = parsed.entry.end
+        local_split = split_at.astimezone(reader.timezone).replace(second=0, microsecond=0)
+        if not local_start < local_split < local_end:
+            raise InvalidSplitTimeError("not between the start and the end of the entry")
+
+        indent = parsed.line[: len(parsed.line) - len(parsed.line.lstrip())]
+        # parsed.line excludes the line break, so read the break style from
+        # the file text directly.
+        br = "\r\n" if text[parsed.line_end : parsed.line_end + 2] == "\r\n" else "\n"
+        first_text = format_clock_line(indent, local_start, local_split)
+        second_text = format_clock_line(indent, local_split, local_end)
+
+        edit = TextEdit(
+            start=parsed.line_start,
+            end=parsed.line_end,
+            replacement=first_text + br + second_text,
+        )
+        updated_text = self.replace_clock_line(text, edit)
+
+        _write_atomically(file_config.path, updated_text)
+
+        first_id = _clock_id(
+            parsed.entry.file_id, parsed.entry.heading_id, parsed.line_number, first_text
+        )
+        second_id = _clock_id(
+            parsed.entry.file_id, parsed.entry.heading_id, parsed.line_number + 1, second_text
+        )
+        first = reader.find_clock(first_id)
+        second = reader.find_clock(second_id)
+        if first is None or second is None:
+            raise RuntimeError("Split clocks not found after write")
+        return first.entry, second.entry
 
     def move_clock(
         self,

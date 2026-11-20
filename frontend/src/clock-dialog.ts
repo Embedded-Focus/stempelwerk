@@ -146,7 +146,9 @@ export function openEntryDialog(options: EntryDialogOptions): void {
   splitInput.type = "datetime-local";
   splitInput.step = "60";
   splitInput.name = "split_at";
-  splitInput.required = true;
+  // No required attribute: the panel starts hidden with an empty value, and a
+  // hidden required input blocks native form validation silently. handleSave
+  // checks the split time itself when split mode is active.
   splitInput.className = "clock-dialog-input";
   splitLabel.append(splitLabelText, splitInput);
   const splitPreview = document.createElement("p");
